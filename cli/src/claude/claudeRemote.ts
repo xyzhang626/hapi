@@ -156,6 +156,31 @@ export async function claudeRemote(opts: {
         options: sdkOptions,
     });
 
+    let nextMessageFetchInFlight = false;
+    let inputEnded = false;
+
+    const scheduleNextMessage = () => {
+        if (nextMessageFetchInFlight || inputEnded) {
+            return;
+        }
+
+        nextMessageFetchInFlight = true;
+        void (async () => {
+            try {
+                const next = await opts.nextMessage();
+                if (!next) {
+                    inputEnded = true;
+                    messages.end();
+                    return;
+                }
+                mode = next.mode;
+                messages.push({ type: 'user', message: { role: 'user', content: next.message } });
+            } finally {
+                nextMessageFetchInFlight = false;
+            }
+        })();
+    };
+
     updateThinking(true);
     try {
         logger.debug(`[claudeRemote] Starting to iterate over response`);
@@ -201,14 +226,10 @@ export async function claudeRemote(opts: {
                 // Send ready event
                 opts.onReady();
 
-                // Push next message
-                const next = await opts.nextMessage();
-                if (!next) {
-                    messages.end();
-                    return;
-                }
-                mode = next.mode;
-                messages.push({ type: 'user', message: { role: 'user', content: next.message } });
+                // Pull next user message without blocking response stream processing.
+                // Claude may emit autonomous async messages (e.g. scheduled tasks) after a result,
+                // and we must keep consuming those messages immediately.
+                scheduleNextMessage();
             }
 
             // Handle tool result
