@@ -10,10 +10,6 @@ vi.mock('@/modules/watcher/awaitFileExist', () => ({
     awaitFileExist: async () => true
 }));
 
-vi.mock('@/claude/sdk/utils', () => ({
-    getDefaultClaudeCodePath: () => '/usr/bin/claude'
-}));
-
 const queryMock = vi.fn();
 
 function deferred<T>(): {
