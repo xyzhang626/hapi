@@ -34,6 +34,7 @@ function createSession(overrides?: Partial<Session>): Session {
         thinking: false,
         thinkingAt: 1,
         model: null,
+        effort: null,
         permissionMode: 'default'
     }
 

@@ -202,6 +202,8 @@ export default {
   'tool.exitPlanMode.start': 'Start implementation',
   'tool.exitPlanMode.selectOption': 'Please choose how to start implementation.',
   'tool.exitPlanMode.selected': 'Selected implementation',
+  'tool.exitPlanMode.denied': 'Plan not approved.',
+  'tool.exitPlanMode.canceled': 'Plan execution canceled.',
   'tool.exitPlanMode.keepContext.title': 'Keep context',
   'tool.exitPlanMode.keepContext.description': 'Continue implementation in the current Claude session.',
   'tool.exitPlanMode.clearContext.title': 'Clear context',

@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite'
 import { randomUUID } from 'node:crypto'
 
+import { normalizeAgentState } from './normalizeAgentState'
 import type { StoredSession, VersionedUpdateResult } from './types'
 import { safeJsonParse } from './json'
 import { updateVersionedField } from './versionedUpdates'
@@ -72,7 +73,8 @@ export function getOrCreateSession(
     const id = randomUUID()
 
     const metadataJson = JSON.stringify(metadata)
-    const agentStateJson = agentState === null || agentState === undefined ? null : JSON.stringify(agentState)
+    const normalizedAgentState = normalizeAgentState(agentState)
+    const agentStateJson = normalizedAgentState === null ? null : JSON.stringify(normalizedAgentState)
 
     db.prepare(`
         INSERT INTO sessions (
@@ -155,7 +157,7 @@ export function updateSessionAgentState(
     namespace: string
 ): VersionedUpdateResult<unknown | null> {
     const now = Date.now()
-    const normalized = agentState ?? null
+    const normalized = normalizeAgentState(agentState)
 
     return updateVersionedField({
         db,
@@ -167,7 +169,7 @@ export function updateSessionAgentState(
         expectedVersion,
         value: normalized,
         encode: (value) => (value === null ? null : JSON.stringify(value)),
-        decode: safeJsonParse,
+        decode: (value) => normalizeAgentState(safeJsonParse(value)),
         setClauses: ['updated_at = @updated_at', 'seq = seq + 1'],
         params: { updated_at: now }
     })

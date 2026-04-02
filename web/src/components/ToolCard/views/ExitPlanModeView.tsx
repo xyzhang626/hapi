@@ -11,8 +11,14 @@ export function ExitPlanModeView(props: ToolViewProps) {
     const implementationMode = isExitPlanImplementationMode(permission?.implementationMode)
         ? permission.implementationMode
         : null
+    const fallbackReason = permission?.status === 'denied'
+        ? t('tool.exitPlanMode.denied')
+        : permission?.status === 'canceled'
+            ? t('tool.exitPlanMode.canceled')
+            : null
+    const denialReason = permission?.reason ?? fallbackReason
 
-    if (!plan && !implementationMode && !permission?.reason) return null
+    if (!plan && !implementationMode && !denialReason) return null
 
     return (
         <div className="flex flex-col gap-3">
@@ -38,9 +44,9 @@ export function ExitPlanModeView(props: ToolViewProps) {
                 </div>
             ) : null}
 
-            {(permission?.status === 'denied' || permission?.status === 'canceled') && permission.reason ? (
+            {(permission?.status === 'denied' || permission?.status === 'canceled') && denialReason ? (
                 <div className="text-xs text-red-600">
-                    {permission.reason}
+                    {denialReason}
                 </div>
             ) : null}
         </div>

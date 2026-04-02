@@ -26,6 +26,7 @@ import {
 interface PermissionResponse {
     id: string;
     approved: boolean;
+    decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort';
     reason?: string;
     mode?: PermissionMode;
     implementationMode?: ExitPlanImplementationMode;
@@ -161,6 +162,21 @@ function normalizeClaudePermissionMode(mode: PermissionCompletion['mode']): Perm
         : undefined;
 }
 
+function normalizeClaudePermissionDecision(
+    status: PermissionCompletion['status'],
+    decision: PermissionResponse['decision']
+): PermissionCompletion['decision'] | undefined {
+    if (status === 'approved') {
+        return decision === 'approved' || decision === 'approved_for_session'
+            ? decision
+            : undefined;
+    }
+
+    return decision === 'denied' || decision === 'abort'
+        ? decision
+        : undefined;
+}
+
 function buildExitPlanRestartPrompt(input: unknown, implementationMode: ExitPlanImplementationMode): string {
     if (implementationMode === 'keep_context') {
         return PLAN_FAKE_RESTART;
@@ -211,24 +227,22 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
         this.session.setPermissionMode(mode);
     }
 
-    /**
-     * Handler response
-     */
-    protected async handlePermissionResponse(
-        response: PermissionResponse,
-        pending: PendingPermissionRequest<PermissionResult>
-    ): Promise<PermissionCompletion> {
-        const isExitPlanModeRequest = pending.toolName === 'exit_plan_mode' || pending.toolName === 'ExitPlanMode';
-        const completion: PermissionCompletion = {
-            status: response.approved ? 'approved' : 'denied',
-            reason: response.reason,
-            mode: response.mode,
-            implementationMode: response.implementationMode,
-            allowTools: response.allowTools,
-            answers: response.answers
-        };
+    private syncResponseSnapshot(response: PermissionResponse, completion: PermissionCompletion): void {
+        const existing = this.responses.get(response.id);
+        this.responses.set(response.id, {
+            ...response,
+            approved: completion.status === 'approved',
+            reason: completion.reason ?? response.reason,
+            decision: completion.decision,
+            mode: normalizeClaudePermissionMode(completion.mode),
+            implementationMode: completion.implementationMode,
+            allowTools: completion.allowTools,
+            answers: completion.answers ?? response.answers,
+            receivedAt: existing?.receivedAt ?? response.receivedAt ?? Date.now()
+        });
+    }
 
-        // Update allowed tools
+    private applyPermissionSideEffects(response: PermissionResponse): void {
         if (response.allowTools && response.allowTools.length > 0) {
             response.allowTools.forEach(tool => {
                 if (isQuestionToolName(tool)) {
@@ -242,20 +256,57 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
             });
         }
 
-        // Update permission mode
-        if (response.mode && !isExitPlanModeRequest) {
-            this.permissionMode = response.mode;
-            this.session.setPermissionMode(response.mode);
+        const normalizedMode = normalizeClaudePermissionMode(response.mode);
+        if (normalizedMode) {
+            this.permissionMode = normalizedMode;
+            this.session.setPermissionMode(normalizedMode);
         }
+    }
+
+    /**
+     * Handler response
+     */
+    protected async handlePermissionResponse(
+        response: PermissionResponse,
+        pending: PendingPermissionRequest<PermissionResult>
+    ): Promise<PermissionCompletion> {
+        const isExitPlanModeRequest = pending.toolName === 'exit_plan_mode' || pending.toolName === 'ExitPlanMode';
+        const completion: PermissionCompletion = {
+            status: response.approved ? 'approved' : 'denied',
+            reason: response.reason,
+            mode: response.mode,
+            implementationMode: response.implementationMode,
+            decision: normalizeClaudePermissionDecision(
+                response.approved ? 'approved' : 'denied',
+                response.decision
+            ),
+            allowTools: response.allowTools,
+            answers: response.answers
+        };
 
         // Handle ask_user_question
         if (isAskUserQuestionToolName(pending.toolName)) {
             const answers = response.answers ?? {};
-            if (Object.keys(answers).length === 0) {
-                pending.resolve({ behavior: 'deny', message: 'No answers were provided.' });
+            if (!response.approved) {
+                completion.status = 'denied';
+                completion.reason = completion.reason ?? response.reason ?? 'The user denied the request.';
+                completion.mode = undefined;
+                completion.allowTools = undefined;
+                completion.decision = normalizeClaudePermissionDecision(completion.status, response.decision);
+                this.syncResponseSnapshot(response, completion);
+                pending.resolve({ behavior: 'deny', message: response.reason || 'The user denied the request.' });
+            } else if (Object.keys(answers).length === 0) {
                 completion.status = 'denied';
                 completion.reason = completion.reason ?? 'No answers were provided.';
+                completion.mode = undefined;
+                completion.allowTools = undefined;
+                completion.decision = normalizeClaudePermissionDecision(completion.status, response.decision);
+                this.syncResponseSnapshot(response, completion);
+                pending.resolve({ behavior: 'deny', message: 'No answers were provided.' });
             } else {
+                this.applyPermissionSideEffects(response);
+                completion.decision = normalizeClaudePermissionDecision(completion.status, response.decision);
+                this.syncResponseSnapshot(response, completion);
                 pending.resolve({
                     behavior: 'allow',
                     updatedInput: buildAskUserQuestionUpdatedInput(pending.input, answers)
@@ -267,11 +318,26 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
         // Handle request_user_input
         if (isRequestUserInputToolName(pending.toolName)) {
             const answers = response.answers ?? {};
-            if (Object.keys(answers).length === 0) {
-                pending.resolve({ behavior: 'deny', message: 'No answers were provided.' });
+            if (!response.approved) {
+                completion.status = 'denied';
+                completion.reason = completion.reason ?? response.reason ?? 'The user denied the request.';
+                completion.mode = undefined;
+                completion.allowTools = undefined;
+                completion.decision = normalizeClaudePermissionDecision(completion.status, response.decision);
+                this.syncResponseSnapshot(response, completion);
+                pending.resolve({ behavior: 'deny', message: response.reason || 'The user denied the request.' });
+            } else if (Object.keys(answers).length === 0) {
                 completion.status = 'denied';
                 completion.reason = completion.reason ?? 'No answers were provided.';
+                completion.mode = undefined;
+                completion.allowTools = undefined;
+                completion.decision = normalizeClaudePermissionDecision(completion.status, response.decision);
+                this.syncResponseSnapshot(response, completion);
+                pending.resolve({ behavior: 'deny', message: 'No answers were provided.' });
             } else {
+                this.applyPermissionSideEffects(response);
+                completion.decision = normalizeClaudePermissionDecision(completion.status, response.decision);
+                this.syncResponseSnapshot(response, completion);
                 pending.resolve({
                     behavior: 'allow',
                     updatedInput: buildRequestUserInputUpdatedInput(pending.input, answers)
@@ -307,17 +373,28 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
                     permissionMode
                 });
                 this.session.queue.unshiftIsolate(restartPrompt, restartMode);
+                completion.decision = normalizeClaudePermissionDecision(completion.status, response.decision);
+                this.syncResponseSnapshot(response, completion);
                 pending.resolve({ behavior: 'deny', message: PLAN_FAKE_REJECT });
             } else {
                 completion.mode = undefined;
                 completion.implementationMode = undefined;
+                completion.decision = normalizeClaudePermissionDecision(completion.status, response.decision);
+                this.syncResponseSnapshot(response, completion);
                 pending.resolve({ behavior: 'deny', message: response.reason || 'Plan rejected' });
             }
             return completion;
         }
 
+        if (completion.status === 'approved') {
+            this.applyPermissionSideEffects(response);
+        }
+
+        completion.decision = normalizeClaudePermissionDecision(completion.status, response.decision);
+        this.syncResponseSnapshot(response, completion);
+
         // Handle default case for all other tools
-        const result: PermissionResult = response.approved
+        const result: PermissionResult = completion.status === 'approved'
             ? { behavior: 'allow', updatedInput: (pending.input as Record<string, unknown>) || {} }
             : { behavior: 'deny', message: response.reason || `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.` };
 
@@ -546,20 +623,10 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
 
     protected onResponseReceived(response: PermissionResponse): void {
         logger.debug(`Permission response: ${JSON.stringify(response)}`);
-        this.responses.set(response.id, { ...response, receivedAt: Date.now() });
     }
 
     protected onRequestCompleted(response: PermissionResponse, completion: PermissionCompletion): void {
-        const existing = this.responses.get(response.id);
-        this.responses.set(response.id, {
-            ...response,
-            reason: completion.reason ?? response.reason,
-            mode: normalizeClaudePermissionMode(completion.mode),
-            implementationMode: completion.implementationMode,
-            allowTools: completion.allowTools ?? response.allowTools,
-            answers: completion.answers ?? response.answers,
-            receivedAt: existing?.receivedAt ?? response.receivedAt ?? Date.now()
-        });
+        this.syncResponseSnapshot(response, completion);
     }
 
     protected onRequestRegistered(toolCallId: string): void {

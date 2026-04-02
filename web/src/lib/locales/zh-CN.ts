@@ -204,6 +204,8 @@ export default {
   'tool.exitPlanMode.start': '开始实现',
   'tool.exitPlanMode.selectOption': '请选择如何开始实现。',
   'tool.exitPlanMode.selected': '已选实现方式',
+  'tool.exitPlanMode.denied': '计划未获批准。',
+  'tool.exitPlanMode.canceled': '计划执行已取消。',
   'tool.exitPlanMode.keepContext.title': '保留上下文',
   'tool.exitPlanMode.keepContext.description': '在当前 Claude 会话中继续实现。',
   'tool.exitPlanMode.clearContext.title': '清除上下文',
