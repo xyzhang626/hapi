@@ -342,7 +342,7 @@ export class ApiClient {
             mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
             implementationMode?: ExitPlanImplementationMode
             allowTools?: string[]
-            decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort'
+            decision?: 'approved' | 'approved_for_session'
             answers?: Record<string, string[]> | Record<string, { answers: string[] }>
         }
     ): Promise<void> {
@@ -359,7 +359,7 @@ export class ApiClient {
         sessionId: string,
         requestId: string,
         options?: {
-            decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort'
+            decision?: 'denied' | 'abort'
         }
     ): Promise<void> {
         await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(requestId)}/deny`, {

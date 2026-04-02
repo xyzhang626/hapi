@@ -155,6 +155,12 @@ function getExitPlanRestartPermissionMode(response: PermissionResponse): Permiss
         : 'default';
 }
 
+function normalizeClaudePermissionMode(mode: PermissionCompletion['mode']): PermissionMode | undefined {
+    return mode === 'default' || mode === 'acceptEdits' || mode === 'bypassPermissions' || mode === 'plan'
+        ? mode
+        : undefined;
+}
+
 function buildExitPlanRestartPrompt(input: unknown, implementationMode: ExitPlanImplementationMode): string {
     if (implementationMode === 'keep_context') {
         return PLAN_FAKE_RESTART;
@@ -541,6 +547,19 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
     protected onResponseReceived(response: PermissionResponse): void {
         logger.debug(`Permission response: ${JSON.stringify(response)}`);
         this.responses.set(response.id, { ...response, receivedAt: Date.now() });
+    }
+
+    protected onRequestCompleted(response: PermissionResponse, completion: PermissionCompletion): void {
+        const existing = this.responses.get(response.id);
+        this.responses.set(response.id, {
+            ...response,
+            reason: completion.reason ?? response.reason,
+            mode: normalizeClaudePermissionMode(completion.mode),
+            implementationMode: completion.implementationMode,
+            allowTools: completion.allowTools ?? response.allowTools,
+            answers: completion.answers ?? response.answers,
+            receivedAt: existing?.receivedAt ?? response.receivedAt ?? Date.now()
+        });
     }
 
     protected onRequestRegistered(toolCallId: string): void {

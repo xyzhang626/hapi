@@ -90,6 +90,11 @@ describe('PermissionHandler exit_plan_mode', () => {
             effort: 'high',
             appendSystemPrompt: 'current append prompt'
         });
+        expect(permissionHandler.getResponses().get('tool-exit-plan')).toMatchObject({
+            approved: true,
+            mode: 'default',
+            implementationMode: 'keep_context'
+        });
 
         expect(getAgentState().completedRequests).toMatchObject({
             'tool-exit-plan': {
@@ -191,6 +196,11 @@ describe('PermissionHandler exit_plan_mode', () => {
             model: 'sonnet',
             effort: 'high',
             appendSystemPrompt: 'current append prompt'
+        });
+        expect(permissionHandler.getResponses().get('tool-exit-plan-invalid-mode')).toMatchObject({
+            approved: true,
+            mode: 'default',
+            implementationMode: 'keep_context'
         });
         expect(getAgentState().completedRequests).toMatchObject({
             'tool-exit-plan-invalid-mode': {
