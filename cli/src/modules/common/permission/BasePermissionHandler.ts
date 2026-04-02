@@ -83,7 +83,7 @@ export type PendingPermissionRequest<TResult> = {
 export type PermissionCompletion = {
     status: 'approved' | 'denied' | 'canceled';
     reason?: string;
-    mode?: string;
+    mode?: PermissionMode;
     implementationMode?: ExitPlanImplementationMode;
     decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort';
     allowTools?: string[];
@@ -116,6 +116,9 @@ export abstract class BasePermissionHandler<TResponse extends { id: string }, TR
     }
 
     protected onResponseReceived(_response: TResponse): void {
+    }
+
+    protected onRequestCompleted(_response: TResponse, _completion: PermissionCompletion): void {
     }
 
     protected resolveAutoApprovalDecision(
@@ -218,6 +221,7 @@ export abstract class BasePermissionHandler<TResponse extends { id: string }, TR
             this.pendingRequests.delete(response.id);
 
             const completion = await this.handlePermissionResponse(response, pending);
+            this.onRequestCompleted(response, completion);
             this.finalizeRequest(response.id, completion);
         });
     }

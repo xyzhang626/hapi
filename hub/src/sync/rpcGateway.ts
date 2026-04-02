@@ -56,7 +56,7 @@ export class RpcGateway {
         requestId: string,
         mode?: PermissionMode,
         allowTools?: string[],
-        decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort',
+        decision?: 'approved' | 'approved_for_session',
         answers?: Record<string, string[]> | Record<string, { answers: string[] }>,
         implementationMode?: ExitPlanImplementationMode
     ): Promise<void> {
@@ -74,7 +74,7 @@ export class RpcGateway {
     async denyPermission(
         sessionId: string,
         requestId: string,
-        decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort'
+        decision?: 'denied' | 'abort'
     ): Promise<void> {
         await this.sessionRpc(sessionId, 'permission', {
             id: requestId,

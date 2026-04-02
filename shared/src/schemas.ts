@@ -67,7 +67,7 @@ export const AgentStateCompletedRequestSchema = z.object({
     completedAt: z.number().nullish(),
     status: z.enum(['canceled', 'denied', 'approved']),
     reason: z.string().optional(),
-    mode: z.string().optional(),
+    mode: PermissionModeSchema.optional(),
     implementationMode: ExitPlanImplementationModeSchema.optional(),
     decision: z.enum(['approved', 'approved_for_session', 'denied', 'abort']).optional(),
     allowTools: z.array(z.string()).optional(),
