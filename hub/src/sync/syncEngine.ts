@@ -7,7 +7,7 @@
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
-import type { CodexCollaborationMode, DecryptedMessage, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import type { CodexCollaborationMode, DecryptedMessage, ExitPlanImplementationMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import type { RpcRegistry } from '../socket/rpcRegistry'
@@ -252,9 +252,10 @@ export class SyncEngine {
         mode?: PermissionMode,
         allowTools?: string[],
         decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort',
-        answers?: Record<string, string[]> | Record<string, { answers: string[] }>
+        answers?: Record<string, string[]> | Record<string, { answers: string[] }>,
+        implementationMode?: ExitPlanImplementationMode
     ): Promise<void> {
-        await this.rpcGateway.approvePermission(sessionId, requestId, mode, allowTools, decision, answers)
+        await this.rpcGateway.approvePermission(sessionId, requestId, mode, allowTools, decision, answers, implementationMode)
     }
 
     async denyPermission(

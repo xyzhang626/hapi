@@ -1,11 +1,48 @@
 import type { ToolViewProps } from '@/components/ToolCard/views/_all'
-import { isObject } from '@hapi/protocol'
+import { Badge } from '@/components/ui/badge'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { parseExitPlanModeInput, isExitPlanImplementationMode, getExitPlanImplementationModeDescription, getExitPlanImplementationModeLabel } from '@/components/ToolCard/exitPlanMode'
+import { useTranslation } from '@/lib/use-translation'
 
 export function ExitPlanModeView(props: ToolViewProps) {
-    const input = props.block.tool.input
-    if (!isObject(input)) return null
-    const plan = typeof input.plan === 'string' ? input.plan : null
-    if (!plan) return null
-    return <MarkdownRenderer content={plan} />
+    const { t } = useTranslation()
+    const { plan } = parseExitPlanModeInput(props.block.tool.input)
+    const permission = props.block.tool.permission
+    const implementationMode = isExitPlanImplementationMode(permission?.implementationMode)
+        ? permission.implementationMode
+        : null
+
+    if (!plan && !implementationMode && !permission?.reason) return null
+
+    return (
+        <div className="flex flex-col gap-3">
+            {plan ? (
+                <div>
+                    <MarkdownRenderer content={plan} />
+                </div>
+            ) : null}
+
+            {implementationMode ? (
+                <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                    <div className="flex items-center gap-2">
+                        <Badge variant="default">
+                            {t('tool.exitPlanMode.selected')}
+                        </Badge>
+                    </div>
+                    <div className="mt-2 text-sm font-medium text-[var(--app-fg)]">
+                        {getExitPlanImplementationModeLabel(implementationMode, t)}
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--app-hint)]">
+                        {getExitPlanImplementationModeDescription(implementationMode, t)}
+                    </div>
+                </div>
+            ) : null}
+
+            {(permission?.status === 'denied' || permission?.status === 'canceled') && permission.reason ? (
+                <div className="text-xs text-red-600">
+                    {permission.reason}
+                </div>
+            ) : null}
+        </div>
+    )
 }

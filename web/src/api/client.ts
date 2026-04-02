@@ -3,6 +3,7 @@ import type {
     AuthResponse,
     CodexCollaborationMode,
     DeleteUploadResponse,
+    ExitPlanImplementationMode,
     ListDirectoryResponse,
     FileReadResponse,
     FileSearchResponse,
@@ -339,6 +340,7 @@ export class ApiClient {
         requestId: string,
         modeOrOptions?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | {
             mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
+            implementationMode?: ExitPlanImplementationMode
             allowTools?: string[]
             decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort'
             answers?: Record<string, string[]> | Record<string, { answers: string[] }>
