@@ -82,4 +82,20 @@ describe('ExitPlanModeView', () => {
 
         expect(screen.getByText('Need a smaller implementation scope first.')).toBeInTheDocument()
     })
+
+    it('shows fallback denied copy when no explicit reason is present', () => {
+        renderWithProviders(
+            <ExitPlanModeView
+                block={createBlock({
+                    permission: {
+                        id: 'permission-1',
+                        status: 'denied'
+                    }
+                })}
+                metadata={null}
+            />
+        )
+
+        expect(screen.getByText('Plan not approved.')).toBeInTheDocument()
+    })
 })

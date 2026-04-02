@@ -211,3 +211,162 @@ describe('PermissionHandler exit_plan_mode', () => {
         });
     });
 });
+
+describe('PermissionHandler metadata normalization', () => {
+    it('does not apply allowTools or mode side effects when question answers are missing', async () => {
+        const { session, rpcHandlers, getAgentState } = createSessionStub();
+        const permissionHandler = new PermissionHandler(session as never);
+
+        permissionHandler.onMessage({
+            type: 'assistant',
+            message: {
+                role: 'assistant',
+                content: [{
+                    type: 'tool_use',
+                    id: 'tool-question-empty',
+                    name: 'ask_user_question',
+                    input: {
+                        questions: [{ question: 'Proceed?' }]
+                    }
+                }]
+            }
+        } as never);
+
+        const questionCall = permissionHandler.handleToolCall(
+            'ask_user_question',
+            { questions: [{ question: 'Proceed?' }] },
+            { permissionMode: 'default' } as never,
+            { signal: new AbortController().signal }
+        );
+
+        const permissionRpc = rpcHandlers.get('permission');
+        expect(permissionRpc).toBeTypeOf('function');
+
+        await permissionRpc?.({
+            id: 'tool-question-empty',
+            approved: true,
+            mode: 'acceptEdits',
+            allowTools: ['Edit'],
+            answers: {}
+        });
+
+        await expect(questionCall).resolves.toEqual({
+            behavior: 'deny',
+            message: 'No answers were provided.'
+        });
+
+        expect(session.setPermissionMode).not.toHaveBeenCalled();
+        expect(permissionHandler.getResponses().get('tool-question-empty')).toMatchObject({
+            approved: false,
+            reason: 'No answers were provided.'
+        });
+        expect(permissionHandler.getResponses().get('tool-question-empty')?.mode).toBeUndefined();
+        expect(permissionHandler.getResponses().get('tool-question-empty')?.allowTools).toBeUndefined();
+        expect(getAgentState().completedRequests).toMatchObject({
+            'tool-question-empty': {
+                status: 'denied',
+                reason: 'No answers were provided.'
+            }
+        });
+
+        permissionHandler.onMessage({
+            type: 'assistant',
+            message: {
+                role: 'assistant',
+                content: [{
+                    type: 'tool_use',
+                    id: 'tool-edit-after-empty-answer',
+                    name: 'Edit',
+                    input: {
+                        file_path: 'src/example.ts',
+                        old_string: 'before',
+                        new_string: 'after'
+                    }
+                }]
+            }
+        } as never);
+
+        const abortController = new AbortController();
+        const editCall = permissionHandler.handleToolCall(
+            'Edit',
+            {
+                file_path: 'src/example.ts',
+                old_string: 'before',
+                new_string: 'after'
+            },
+            { permissionMode: 'default' } as never,
+            { signal: abortController.signal }
+        );
+
+        expect(getAgentState().requests).toMatchObject({
+            'tool-edit-after-empty-answer': {
+                tool: 'Edit'
+            }
+        });
+
+        abortController.abort();
+        await expect(editCall).rejects.toThrow('Permission request aborted');
+    });
+
+    it('preserves permission decisions in responses and completed requests', async () => {
+        const { session, rpcHandlers, getAgentState } = createSessionStub();
+        const permissionHandler = new PermissionHandler(session as never);
+
+        permissionHandler.onMessage({
+            type: 'assistant',
+            message: {
+                role: 'assistant',
+                content: [{
+                    type: 'tool_use',
+                    id: 'tool-edit-decision',
+                    name: 'Edit',
+                    input: {
+                        file_path: 'src/example.ts',
+                        old_string: 'before',
+                        new_string: 'after'
+                    }
+                }]
+            }
+        } as never);
+
+        const toolCall = permissionHandler.handleToolCall(
+            'Edit',
+            {
+                file_path: 'src/example.ts',
+                old_string: 'before',
+                new_string: 'after'
+            },
+            { permissionMode: 'default' } as never,
+            { signal: new AbortController().signal }
+        );
+
+        const permissionRpc = rpcHandlers.get('permission');
+        expect(permissionRpc).toBeTypeOf('function');
+
+        await permissionRpc?.({
+            id: 'tool-edit-decision',
+            approved: true,
+            decision: 'approved_for_session'
+        });
+
+        await expect(toolCall).resolves.toEqual({
+            behavior: 'allow',
+            updatedInput: {
+                file_path: 'src/example.ts',
+                old_string: 'before',
+                new_string: 'after'
+            }
+        });
+
+        expect(permissionHandler.getResponses().get('tool-edit-decision')).toMatchObject({
+            approved: true,
+            decision: 'approved_for_session'
+        });
+        expect(getAgentState().completedRequests).toMatchObject({
+            'tool-edit-decision': {
+                status: 'approved',
+                decision: 'approved_for_session'
+            }
+        });
+    });
+});
