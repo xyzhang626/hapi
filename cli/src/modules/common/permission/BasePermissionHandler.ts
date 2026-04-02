@@ -1,5 +1,5 @@
 import type { AgentState } from "@/api/types";
-import type { PermissionMode } from "@hapi/protocol/types";
+import type { ExitPlanImplementationMode, PermissionMode } from "@hapi/protocol/types";
 
 type RpcHandlerManagerLike = {
     registerHandler<TRequest = unknown, TResponse = unknown>(
@@ -84,6 +84,7 @@ export type PermissionCompletion = {
     status: 'approved' | 'denied' | 'canceled';
     reason?: string;
     mode?: string;
+    implementationMode?: ExitPlanImplementationMode;
     decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort';
     allowTools?: string[];
     answers?: Record<string, string[]> | Record<string, { answers: string[] }>;
@@ -166,6 +167,7 @@ export abstract class BasePermissionHandler<TResponse extends { id: string }, TR
                         status: completion.status,
                         reason: completion.reason,
                         mode: completion.mode,
+                        implementationMode: completion.implementationMode,
                         decision: completion.decision,
                         allowTools: completion.allowTools,
                         answers: completion.answers

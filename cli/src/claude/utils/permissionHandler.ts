@@ -16,6 +16,7 @@ import { EnhancedMode, PermissionMode } from "../loop";
 import { getToolDescriptor } from "./getToolDescriptor";
 import { delay } from "@/utils/time";
 import { isObject } from "@hapi/protocol";
+import type { ExitPlanImplementationMode } from "@hapi/protocol/types";
 import {
     BasePermissionHandler,
     type PendingPermissionRequest,
@@ -27,12 +28,14 @@ interface PermissionResponse {
     approved: boolean;
     reason?: string;
     mode?: PermissionMode;
+    implementationMode?: ExitPlanImplementationMode;
     allowTools?: string[];
     answers?: Record<string, string[]> | Record<string, { answers: string[] }>;
     receivedAt?: number;
 }
 
 const PLAN_EXIT_MODES: PermissionMode[] = ['default', 'acceptEdits', 'bypassPermissions'];
+const DEFAULT_EXIT_PLAN_IMPLEMENTATION_MODE: ExitPlanImplementationMode = 'keep_context';
 
 function isAskUserQuestionToolName(toolName: string): boolean {
     return toolName === 'AskUserQuestion' || toolName === 'ask_user_question';
@@ -136,6 +139,45 @@ function buildRequestUserInputUpdatedInput(input: unknown, answers: unknown): Re
     };
 }
 
+function isExitPlanImplementationMode(value: unknown): value is ExitPlanImplementationMode {
+    return value === 'keep_context' || value === 'clear_context';
+}
+
+function resolveExitPlanImplementationMode(response: PermissionResponse): ExitPlanImplementationMode {
+    return isExitPlanImplementationMode(response.implementationMode)
+        ? response.implementationMode
+        : DEFAULT_EXIT_PLAN_IMPLEMENTATION_MODE;
+}
+
+function getExitPlanRestartPermissionMode(response: PermissionResponse): PermissionMode {
+    return response.mode && PLAN_EXIT_MODES.includes(response.mode)
+        ? response.mode
+        : 'default';
+}
+
+function buildExitPlanRestartPrompt(input: unknown, implementationMode: ExitPlanImplementationMode): string {
+    if (implementationMode === 'keep_context') {
+        return PLAN_FAKE_RESTART;
+    }
+
+    const plan = isObject(input) && typeof input.plan === 'string'
+        ? input.plan.trim()
+        : '';
+
+    if (!plan) {
+        return 'The user approved your plan. You are restarting in a fresh context. Begin implementation now.';
+    }
+
+    return [
+        'The user approved this implementation plan.',
+        'You are restarting in a fresh context, so do not rely on prior conversation state.',
+        'Implement the approved plan below immediately.',
+        '',
+        'Approved plan:',
+        plan
+    ].join('\n');
+}
+
 export class PermissionHandler extends BasePermissionHandler<PermissionResponse, PermissionResult> {
     private toolCalls: { id: string, name: string, input: any, used: boolean }[] = [];
     private responses = new Map<string, PermissionResponse>();
@@ -170,10 +212,12 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
         response: PermissionResponse,
         pending: PendingPermissionRequest<PermissionResult>
     ): Promise<PermissionCompletion> {
+        const isExitPlanModeRequest = pending.toolName === 'exit_plan_mode' || pending.toolName === 'ExitPlanMode';
         const completion: PermissionCompletion = {
             status: response.approved ? 'approved' : 'denied',
             reason: response.reason,
             mode: response.mode,
+            implementationMode: response.implementationMode,
             allowTools: response.allowTools,
             answers: response.answers
         };
@@ -193,7 +237,7 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
         }
 
         // Update permission mode
-        if (response.mode) {
+        if (response.mode && !isExitPlanModeRequest) {
             this.permissionMode = response.mode;
             this.session.setPermissionMode(response.mode);
         }
@@ -230,19 +274,37 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
             return completion;
         }
 
-        if (pending.toolName === 'exit_plan_mode' || pending.toolName === 'ExitPlanMode') {
+        if (isExitPlanModeRequest) {
             // Handle exit_plan_mode specially
             logger.debug('Plan mode result received', response);
             if (response.approved) {
-                logger.debug('Plan approved - injecting PLAN_FAKE_RESTART');
-                // Inject the approval message at the beginning of the queue
-                if (response.mode && PLAN_EXIT_MODES.includes(response.mode)) {
-                    this.session.queue.unshift(PLAN_FAKE_RESTART, { permissionMode: response.mode });
-                } else {
-                    this.session.queue.unshift(PLAN_FAKE_RESTART, { permissionMode: 'default' });
+                const implementationMode = resolveExitPlanImplementationMode(response);
+                const permissionMode = getExitPlanRestartPermissionMode(response);
+                const restartPrompt = buildExitPlanRestartPrompt(pending.input, implementationMode);
+                const restartMode: EnhancedMode = {
+                    ...this.session.getModeSnapshot(),
+                    permissionMode
+                };
+
+                completion.mode = permissionMode;
+                completion.implementationMode = implementationMode;
+                this.permissionMode = permissionMode;
+                this.session.setPermissionMode(permissionMode);
+
+                if (implementationMode === 'clear_context') {
+                    logger.debug('Plan approved - clearing Claude session ID before fresh-context restart');
+                    this.session.clearSessionId();
                 }
+
+                logger.debug('Plan approved - injecting isolated restart prompt', {
+                    implementationMode,
+                    permissionMode
+                });
+                this.session.queue.unshiftIsolate(restartPrompt, restartMode);
                 pending.resolve({ behavior: 'deny', message: PLAN_FAKE_REJECT });
             } else {
+                completion.mode = undefined;
+                completion.implementationMode = undefined;
                 pending.resolve({ behavior: 'deny', message: response.reason || 'Plan rejected' });
             }
             return completion;

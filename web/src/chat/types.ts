@@ -24,6 +24,7 @@ export type ToolResultPermission = {
     date: number
     result: 'approved' | 'denied'
     mode?: string
+    implementationMode?: string
     allowedTools?: string[]
     decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort'
 }
@@ -91,6 +92,7 @@ export type ToolPermission = {
     status: 'pending' | 'approved' | 'denied' | 'canceled'
     reason?: string
     mode?: string
+    implementationMode?: string
     allowedTools?: string[]
     decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort'
     answers?: Record<string, string[]> | Record<string, { answers: string[] }>

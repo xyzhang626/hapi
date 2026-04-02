@@ -10,8 +10,10 @@ import { DiffView } from '@/components/DiffView'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
 import { AskUserQuestionFooter } from '@/components/ToolCard/AskUserQuestionFooter'
+import { ExitPlanModeFooter } from '@/components/ToolCard/ExitPlanModeFooter'
 import { RequestUserInputFooter } from '@/components/ToolCard/RequestUserInputFooter'
 import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion'
+import { isExitPlanModeToolName } from '@/components/ToolCard/exitPlanMode'
 import { isRequestUserInputToolName } from '@/components/ToolCard/requestUserInput'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { getToolFullViewComponent, getToolViewComponent } from '@/components/ToolCard/views/_all'
@@ -302,7 +304,8 @@ function ToolCardInner(props: ToolCardProps) {
     ])
 
     const toolName = props.block.tool.name
-    const toolTitle = presentation.title
+    const isExitPlanMode = isExitPlanModeToolName(toolName)
+    const toolTitle = isExitPlanMode ? t('tool.exitPlanMode.title') : presentation.title
     const subtitle = presentation.subtitle ?? props.block.tool.description
     const taskSummary = renderTaskSummary(props.block, props.metadata)
     const runningFrom = props.block.tool.startedAt ?? props.block.tool.createdAt
@@ -313,6 +316,11 @@ function ToolCardInner(props: ToolCardProps) {
     const permission = props.block.tool.permission
     const isAskUserQuestion = isAskUserQuestionToolName(toolName)
     const isRequestUserInput = isRequestUserInputToolName(toolName)
+    const isExitPlanModeWithChoice = isExitPlanMode
+        && (permission?.implementationMode !== undefined
+            || permission?.status === 'approved'
+            || permission?.status === 'denied'
+            || permission?.status === 'canceled')
     const isQuestionTool = isAskUserQuestion || isRequestUserInput
     const showsPermissionFooter = Boolean(permission && (
         permission.status === 'pending'
@@ -379,6 +387,7 @@ function ToolCardInner(props: ToolCardProps) {
                             const isQuestionToolWithAnswers = isQuestionTool
                                 && permission?.answers
                                 && Object.keys(permission.answers).length > 0
+                            const hideResult = isQuestionToolWithAnswers || isExitPlanModeWithChoice
 
                             return (
                                 <div className="mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto">
@@ -389,10 +398,10 @@ function ToolCardInner(props: ToolCardProps) {
                                         {FullToolView ? (
                                             <FullToolView block={props.block} metadata={props.metadata} />
                                         ) : (
-                                            renderToolInput(props.block)
+                                                renderToolInput(props.block)
                                         )}
                                     </div>
-                                    {!isQuestionToolWithAnswers && (
+                                    {!hideResult && (
                                         <div>
                                             <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">{t('tool.result')}</div>
                                             <ResultToolView block={props.block} metadata={props.metadata} />
@@ -432,32 +441,58 @@ function ToolCardInner(props: ToolCardProps) {
                         )
                     ) : null}
 
-                    {isAskUserQuestion && permission?.status === 'pending' ? (
-                        <AskUserQuestionFooter
-                            api={props.api}
-                            sessionId={props.sessionId}
-                            tool={props.block.tool}
-                            disabled={props.disabled}
-                            onDone={props.onDone}
-                        />
-                    ) : isRequestUserInput && permission?.status === 'pending' ? (
-                        <RequestUserInputFooter
-                            api={props.api}
-                            sessionId={props.sessionId}
-                            tool={props.block.tool}
-                            disabled={props.disabled}
-                            onDone={props.onDone}
-                        />
-                    ) : (
-                        <PermissionFooter
-                            api={props.api}
-                            sessionId={props.sessionId}
-                            metadata={props.metadata}
-                            tool={props.block.tool}
-                            disabled={props.disabled}
-                            onDone={props.onDone}
-                        />
-                    )}
+                    {(() => {
+                        if (isAskUserQuestion && permission?.status === 'pending') {
+                            return (
+                                <AskUserQuestionFooter
+                                    api={props.api}
+                                    sessionId={props.sessionId}
+                                    tool={props.block.tool}
+                                    disabled={props.disabled}
+                                    onDone={props.onDone}
+                                />
+                            )
+                        }
+
+                        if (isExitPlanMode && permission?.status === 'pending') {
+                            return (
+                                <ExitPlanModeFooter
+                                    api={props.api}
+                                    sessionId={props.sessionId}
+                                    tool={props.block.tool}
+                                    disabled={props.disabled}
+                                    onDone={props.onDone}
+                                />
+                            )
+                        }
+
+                        if (isRequestUserInput && permission?.status === 'pending') {
+                            return (
+                                <RequestUserInputFooter
+                                    api={props.api}
+                                    sessionId={props.sessionId}
+                                    tool={props.block.tool}
+                                    disabled={props.disabled}
+                                    onDone={props.onDone}
+                                />
+                            )
+                        }
+
+                        if (isExitPlanMode) {
+                            return null
+                        }
+
+                        return (
+                            <PermissionFooter
+                                api={props.api}
+                                sessionId={props.sessionId}
+                                metadata={props.metadata}
+                                tool={props.block.tool}
+                                disabled={props.disabled}
+                                onDone={props.onDone}
+                            />
+                        )
+                    })()}
                 </CardContent>
             ) : null}
         </Card>

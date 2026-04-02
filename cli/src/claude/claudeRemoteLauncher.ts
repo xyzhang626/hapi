@@ -11,7 +11,7 @@ import { SDKToLogConverter } from "./utils/sdkToLogConverter";
 import { PLAN_FAKE_REJECT } from "./sdk/prompts";
 import { EnhancedMode } from "./loop";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
-import type { ClaudePermissionMode } from "@hapi/protocol/types";
+import type { ClaudePermissionMode, ExitPlanImplementationMode } from "@hapi/protocol/types";
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
@@ -22,6 +22,7 @@ interface PermissionsField {
     date: number;
     result: 'approved' | 'denied';
     mode?: ClaudePermissionMode;
+    implementationMode?: ExitPlanImplementationMode;
     allowedTools?: string[];
 }
 
@@ -208,6 +209,10 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
 
                                 if (response.mode) {
                                     permissions.mode = response.mode;
+                                }
+
+                                if (response.implementationMode) {
+                                    permissions.implementationMode = response.implementationMode;
                                 }
 
                                 if (response.allowTools && response.allowTools.length > 0) {
