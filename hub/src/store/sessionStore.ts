@@ -12,6 +12,7 @@ import {
     getSessions,
     getSessionsByChannel,
     getSessionsByNamespace,
+    getUnassignedSessions,
     setSessionEffort,
     setSessionModel,
     setSessionModelReasoningEffort,
@@ -113,6 +114,10 @@ export class SessionStore {
 
     getSessionsByChannel(channelId: string, namespace: string): StoredSession[] {
         return getSessionsByChannel(this.db, channelId, namespace)
+    }
+
+    getUnassignedSessions(namespace: string): StoredSession[] {
+        return getUnassignedSessions(this.db, namespace)
     }
 
     detachSessionsFromChannel(channelId: string, namespace: string): number {

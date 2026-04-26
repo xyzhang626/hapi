@@ -438,6 +438,13 @@ export function detachSessionsFromChannel(db: Database, channelId: string, names
     return result.changes
 }
 
+export function getUnassignedSessions(db: Database, namespace: string): StoredSession[] {
+    const rows = db.prepare(
+        'SELECT * FROM sessions WHERE namespace = ? AND channel_id IS NULL ORDER BY updated_at DESC'
+    ).all(namespace) as DbSessionRow[]
+    return rows.map(toStoredSession)
+}
+
 export function detachSession(db: Database, sessionId: string, channelId: string, namespace: string): boolean {
     const result = db.prepare(
         'UPDATE sessions SET channel_id = NULL WHERE id = @id AND namespace = @namespace AND channel_id = @channel_id'

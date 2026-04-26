@@ -703,6 +703,16 @@ export class SyncEngine {
 
     getSessionsByChannel(channelId: string, namespace: string): Session[] {
         const stored = this.store.sessions.getSessionsByChannel(channelId, namespace)
+        const isPersonal = this.store.workspaceUsers.isPersonalChannel(channelId)
+        if (isPersonal) {
+            const unassigned = this.store.sessions.getUnassignedSessions(namespace)
+            const allStored = [...stored, ...unassigned]
+            const seen = new Set<string>()
+            return allStored
+                .filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true })
+                .map((s) => this.getSession(s.id))
+                .filter((s): s is Session => s !== undefined)
+        }
         return stored.map((s) => this.getSession(s.id)).filter((s): s is Session => s !== undefined)
     }
 
