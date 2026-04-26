@@ -513,6 +513,9 @@ export function useSSE(options: {
                 } else if (isSessionRecord(event.data) && event.data.id === event.sessionId) {
                     queryClient.setQueryData<SessionResponse>(queryKeys.session(event.sessionId), { session: event.data })
                     upsertSessionSummary(event.data)
+                    if (event.data.channelId) {
+                        void queryClient.invalidateQueries({ queryKey: queryKeys.channelSessions(event.data.channelId) })
+                    }
                 } else {
                     const patch = getSessionPatch(event.data)
                     if (patch) {
@@ -552,6 +555,7 @@ export function useSSE(options: {
 
             if (event.type === 'channel-message-received') {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.channelMessages(event.channelId) })
+                void queryClient.invalidateQueries({ queryKey: queryKeys.channelSessions(event.channelId) })
             }
 
             if (event.type === 'channel-member-added' || event.type === 'channel-member-removed') {
