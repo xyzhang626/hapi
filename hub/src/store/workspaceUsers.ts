@@ -111,7 +111,16 @@ export function ensureDefaults(
 ): { personalChannel: { id: string; name: string }; generalChannel: { id: string; name: string } } {
     db.exec('BEGIN')
     try {
-        const user = upsertUser(db, namespace, userId, displayName)
+        // Only set displayName on first creation; subsequent calls just touch last_active_at
+        let user = getUser(db, namespace, userId)
+        if (user) {
+            db.prepare(
+                'UPDATE workspace_users SET last_active_at = @now WHERE namespace = @namespace AND user_id = @user_id'
+            ).run({ now: Date.now(), namespace, user_id: userId })
+            user = getUser(db, namespace, userId)!
+        } else {
+            user = upsertUser(db, namespace, userId, displayName)
+        }
 
         let generalChannel = getChannelByName(db, namespace, 'general')
         if (!generalChannel) {

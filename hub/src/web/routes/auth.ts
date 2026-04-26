@@ -74,6 +74,7 @@ export function createAuthRoutes(
         }
 
         const displayName = [firstName, lastName].filter(Boolean).join(' ') || `user-${userId}`
+        store.workspaceUsers.upsertUser(namespace, String(userId), displayName)
         const engine = getSyncEngine?.()
         if (engine) {
             engine.ensureWorkspaceDefaults(namespace, String(userId), displayName)
