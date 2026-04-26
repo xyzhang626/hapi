@@ -3,6 +3,9 @@ export type {
     AgentStateCompletedRequest,
     AgentStateRequest,
     AttachmentMetadata,
+    Channel,
+    ChannelMember,
+    ChannelMessage,
     DecryptedMessage,
     Metadata,
     Session,
@@ -12,6 +15,7 @@ export type {
     TeamState,
     TeamTask,
     TodoItem,
+    WorkspaceUser,
     WorktreeMetadata
 } from './schemas'
 

@@ -22,6 +22,7 @@ import { getOrCreateVapidKeys } from './config/vapidKeys'
 import { PushService } from './push/pushService'
 import { PushNotificationChannel } from './push/pushNotificationChannel'
 import { VisibilityTracker } from './visibility/visibilityTracker'
+import { ChannelAgent } from './sync/channelAgent'
 import { TunnelManager } from './tunnel'
 import { waitForTunnelTlsReady } from './tunnel/tlsGate'
 import QRCode from 'qrcode'
@@ -98,6 +99,7 @@ function mergeCorsOrigins(base: string[], extra: string[]): string[] {
 }
 
 let syncEngine: SyncEngine | null = null
+let channelAgent: ChannelAgent | null = null
 let happyBot: HappyBot | null = null
 let webServer: BunServer<WebSocketData> | null = null
 let sseManager: SSEManager | null = null
@@ -164,7 +166,11 @@ async function main() {
     const pushService = new PushService(vapidKeys, vapidSubject, store)
 
     visibilityTracker = new VisibilityTracker()
-    sseManager = new SSEManager(30_000, visibilityTracker)
+    sseManager = new SSEManager(
+        30_000,
+        visibilityTracker,
+        (channelId, userId) => syncEngine?.isChannelMember(channelId, userId) ?? false
+    )
 
     const socketServer = createSocketServer({
         store,
@@ -185,6 +191,7 @@ async function main() {
     })
 
     syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager)
+    channelAgent = new ChannelAgent(syncEngine)
 
     const notificationChannels: NotificationChannel[] = [
         new PushNotificationChannel(pushService, sseManager, visibilityTracker, config.publicUrl)
@@ -298,6 +305,7 @@ async function main() {
         await tunnelManager?.stop()
         await happyBot?.stop()
         notificationHub?.stop()
+        channelAgent?.stop()
         syncEngine?.stop()
         sseManager?.stop()
         webServer?.stop()

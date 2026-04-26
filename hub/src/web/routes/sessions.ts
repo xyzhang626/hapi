@@ -95,6 +95,44 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         return c.json({ session: sessionResult.session })
     })
 
+    // GET /sessions/:id/route — returns channelId for URL redirect
+    app.get('/sessions/:id/route', (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        return c.json({ channelId: sessionResult.session.channelId ?? null })
+    })
+
+    // PATCH /sessions/:id/thread-status — update thread status
+    app.patch('/sessions/:id/thread-status', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+
+        const body = await c.req.json<{ status?: string }>()
+        if (!body.status || !['active', 'completed', 'archived'].includes(body.status)) {
+            return c.json({ error: 'status must be active, completed, or archived' }, 400)
+        }
+
+        const namespace = c.get('namespace')
+        const updated = engine.updateThreadStatus(
+            sessionResult.session.id,
+            namespace,
+            body.status as 'active' | 'completed' | 'archived'
+        )
+        if (!updated) return c.json({ error: 'Failed to update thread status' }, 500)
+        return c.json({ ok: true })
+    })
+
     app.post('/sessions/:id/resume', async (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) {

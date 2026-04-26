@@ -2,17 +2,22 @@ import type { Database } from 'bun:sqlite'
 
 import type { StoredSession, VersionedUpdateResult } from './types'
 import {
+    attachToChannel,
     deleteSession,
+    detachSession,
+    detachSessionsFromChannel,
     getOrCreateSession,
     getSession,
     getSessionByNamespace,
     getSessions,
+    getSessionsByChannel,
     getSessionsByNamespace,
     setSessionEffort,
     setSessionModel,
     setSessionModelReasoningEffort,
     setSessionTeamState,
     setSessionTodos,
+    setThreadStatus,
     touchSessionUpdatedAt,
     updateSessionAgentState,
     updateSessionMetadata
@@ -32,9 +37,10 @@ export class SessionStore {
         namespace: string,
         model?: string,
         effort?: string,
-        modelReasoningEffort?: string
+        modelReasoningEffort?: string,
+        channelOpts?: { channelId?: string; threadTitle?: string; createdByUserId?: string }
     ): StoredSession {
-        return getOrCreateSession(this.db, tag, metadata, agentState, namespace, model, effort, modelReasoningEffort)
+        return getOrCreateSession(this.db, tag, metadata, agentState, namespace, model, effort, modelReasoningEffort, channelOpts)
     }
 
     updateSessionMetadata(
@@ -97,11 +103,31 @@ export class SessionStore {
         return getSessions(this.db)
     }
 
-    getSessionsByNamespace(namespace: string): StoredSession[] {
-        return getSessionsByNamespace(this.db, namespace)
+    getSessionsByNamespace(namespace: string, opts?: { channelId?: string }): StoredSession[] {
+        return getSessionsByNamespace(this.db, namespace, opts)
     }
 
     deleteSession(id: string, namespace: string): boolean {
         return deleteSession(this.db, id, namespace)
+    }
+
+    getSessionsByChannel(channelId: string, namespace: string): StoredSession[] {
+        return getSessionsByChannel(this.db, channelId, namespace)
+    }
+
+    detachSessionsFromChannel(channelId: string, namespace: string): number {
+        return detachSessionsFromChannel(this.db, channelId, namespace)
+    }
+
+    detachSession(sessionId: string, channelId: string, namespace: string): boolean {
+        return detachSession(this.db, sessionId, channelId, namespace)
+    }
+
+    setThreadStatus(sessionId: string, namespace: string, status: 'active' | 'completed' | 'archived'): boolean {
+        return setThreadStatus(this.db, sessionId, namespace, status)
+    }
+
+    attachToChannel(sessionId: string, namespace: string, channelId: string, threadTitle: string, createdByUserId: string): boolean {
+        return attachToChannel(this.db, sessionId, namespace, channelId, threadTitle, createdByUserId)
     }
 }

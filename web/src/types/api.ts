@@ -9,6 +9,9 @@ import type {
 export type {
     AgentState,
     AttachmentMetadata,
+    Channel,
+    ChannelMember,
+    ChannelMessage,
     CodexCollaborationMode,
     PermissionMode,
     Session,
@@ -232,3 +235,10 @@ export type VisibilityPayload = {
 }
 
 export type SyncEvent = ProtocolSyncEvent
+
+export type ChannelsResponse = { channels: Channel[] }
+export type ChannelResponse = { channel: Channel }
+export type ChannelMembersResponse = { members: ChannelMember[] }
+export type ChannelMessagesResponse = { messages: ChannelMessage[] }
+export type ChannelSessionsResponse = { sessions: Session[] }
+export type ChannelInviteResponse = { invite: { id: string; expiresAt: number } }

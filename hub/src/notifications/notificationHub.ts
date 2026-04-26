@@ -62,6 +62,18 @@ export class NotificationHub {
                 })
             }
         }
+
+        if (event.type === 'channel-message-received' && event.namespace) {
+            const msg = event.message
+            if (msg && msg.kind === 'text') {
+                const body = typeof msg.body === 'string' ? msg.body : JSON.stringify(msg.body)
+                if (body.includes('@')) {
+                    this.sendChannelMentionNotification(event.channelId, event.namespace, body, msg.authorUserId).catch((error) => {
+                        console.error('[NotificationHub] Failed to send channel notification:', error)
+                    })
+                }
+            }
+        }
     }
 
     private clearSessionState(sessionId: string): void {
@@ -162,6 +174,26 @@ export class NotificationHub {
                 await channel.sendPermissionRequest(session)
             } catch (error) {
                 console.error('[NotificationHub] Failed to send permission notification:', error)
+            }
+        }
+    }
+
+    private async sendChannelMentionNotification(
+        _channelId: string,
+        namespace: string,
+        body: string,
+        authorUserId: string | null | undefined
+    ): Promise<void> {
+        const preview = body.slice(0, 100)
+        const title = `New message from ${authorUserId ?? 'someone'}`
+        for (const channel of this.channels) {
+            try {
+                if ('sendToast' in channel && typeof (channel as unknown as Record<string, unknown>).sendToast === 'function') {
+                    await (channel as unknown as { sendToast: (ns: string, title: string, body: string) => Promise<void> })
+                        .sendToast(namespace, title, preview)
+                }
+            } catch {
+                // best-effort notification
             }
         }
     }

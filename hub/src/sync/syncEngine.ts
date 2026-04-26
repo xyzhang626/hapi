@@ -10,8 +10,10 @@
 import type { CodexCollaborationMode, DecryptedMessage, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
+import type { StoredChannel, StoredChannelMember, StoredChannelMessage } from '../store/types'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 import type { SSEManager } from '../sse/sseManager'
+import { ChannelCache } from './channelCache'
 import { EventPublisher, type SyncEventListener } from './eventPublisher'
 import { MachineCache, type Machine } from './machineCache'
 import { MessageService } from './messageService'
@@ -47,9 +49,12 @@ export type ResumeSessionResult =
     | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed' }
 
 export class SyncEngine {
+    private readonly store: Store
+    private readonly sseManager: SSEManager
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
     private readonly machineCache: MachineCache
+    private readonly channelCache: ChannelCache
     private readonly messageService: MessageService
     private readonly rpcGateway: RpcGateway
     private inactivityTimer: NodeJS.Timeout | null = null
@@ -60,9 +65,12 @@ export class SyncEngine {
         rpcRegistry: RpcRegistry,
         sseManager: SSEManager
     ) {
+        this.store = store
+        this.sseManager = sseManager
         this.eventPublisher = new EventPublisher(sseManager, (event) => this.resolveNamespace(event))
         this.sessionCache = new SessionCache(store, this.eventPublisher)
         this.machineCache = new MachineCache(store, this.eventPublisher)
+        this.channelCache = new ChannelCache(store, this.eventPublisher)
         this.messageService = new MessageService(
             store,
             io,
@@ -95,6 +103,9 @@ export class SyncEngine {
         if ('machineId' in event) {
             return this.machineCache.getMachine(event.machineId)?.namespace
         }
+        if ('channelId' in event) {
+            return this.channelCache.getChannelNamespace(event.channelId)
+        }
         return undefined
     }
 
@@ -102,8 +113,8 @@ export class SyncEngine {
         return this.sessionCache.getSessions()
     }
 
-    getSessionsByNamespace(namespace: string): Session[] {
-        return this.sessionCache.getSessionsByNamespace(namespace)
+    getSessionsByNamespace(namespace: string, opts?: { channelId?: string }): Session[] {
+        return this.sessionCache.getSessionsByNamespace(namespace, opts)
     }
 
     getSession(sessionId: string): Session | undefined {
@@ -250,6 +261,7 @@ export class SyncEngine {
     private reloadAll(): void {
         this.sessionCache.reloadAll()
         this.machineCache.reloadAll()
+        this.channelCache.reloadAll()
     }
 
     getOrCreateSession(
@@ -259,9 +271,10 @@ export class SyncEngine {
         namespace: string,
         model?: string,
         effort?: string,
-        modelReasoningEffort?: string
+        modelReasoningEffort?: string,
+        channelOpts?: { channelId?: string; threadTitle?: string; createdByUserId?: string }
     ): Session {
-        return this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace, model, effort, modelReasoningEffort)
+        return this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace, model, effort, modelReasoningEffort, channelOpts)
     }
 
     getOrCreateMachine(id: string, metadata: unknown, runnerState: unknown, namespace: string): Machine {
@@ -575,5 +588,205 @@ export class SyncEngine {
 
     async listCodexModelsForMachine(machineId: string): Promise<RpcListCodexModelsResponse> {
         return await this.rpcGateway.listCodexModelsForMachine(machineId)
+    }
+
+    // --- Channel operations ---
+
+    getChannelsForUser(namespace: string, userId: string): StoredChannel[] {
+        return this.channelCache.getChannelsForUser(namespace, userId)
+    }
+
+    getChannel(channelId: string, namespace: string): StoredChannel | null {
+        return this.channelCache.getChannel(channelId, namespace)
+    }
+
+    isChannelMember(channelId: string, userId: string): boolean {
+        return this.channelCache.isMember(channelId, userId)
+    }
+
+    isPersonalChannel(channelId: string): boolean {
+        return this.store.workspaceUsers.isPersonalChannel(channelId)
+    }
+
+    createChannel(
+        namespace: string,
+        name: string,
+        createdBy: string,
+        description?: string,
+        agentConfig?: unknown
+    ): StoredChannel {
+        const channel = this.store.channels.createChannel(namespace, name, createdBy, description, agentConfig)
+        this.channelCache.addChannel(channel)
+        return channel
+    }
+
+    updateChannelData(
+        channelId: string,
+        namespace: string,
+        updates: { name?: string; description?: string | null; agentConfig?: unknown | null }
+    ): boolean {
+        const updated = this.store.channels.updateChannel(channelId, namespace, updates)
+        if (updated) {
+            this.channelCache.updateChannel(channelId, namespace)
+        }
+        return updated
+    }
+
+    deleteChannel(channelId: string, namespace: string): boolean {
+        this.store.sessions.detachSessionsFromChannel(channelId, namespace)
+        const deleted = this.store.channels.deleteChannel(channelId, namespace)
+        if (deleted) {
+            this.channelCache.removeChannel(channelId, namespace)
+        }
+        return deleted
+    }
+
+    addChannelMember(channelId: string, userId: string, role: string): boolean {
+        const added = this.store.channels.addMember(channelId, userId, role)
+        if (added) {
+            const namespace = this.channelCache.getChannelNamespace(channelId)
+            if (namespace) {
+                this.channelCache.addMember(channelId, userId, namespace)
+            }
+        }
+        return added
+    }
+
+    removeChannelMember(channelId: string, userId: string): boolean {
+        const namespace = this.channelCache.getChannelNamespace(channelId)
+        const removed = this.store.channels.removeMember(channelId, userId)
+        if (removed && namespace) {
+            this.channelCache.removeMember(channelId, userId, namespace)
+        }
+        return removed
+    }
+
+    getChannelMembers(channelId: string): StoredChannelMember[] {
+        return this.channelCache.getMembers(channelId)
+    }
+
+    sendChannelMessage(
+        channelId: string,
+        namespace: string,
+        authorUserId: string | null,
+        kind: string,
+        body: unknown,
+        threadSessionId?: string
+    ): StoredChannelMessage {
+        const message = this.store.channelMessages.addMessage(channelId, namespace, authorUserId, kind, body, threadSessionId)
+        this.eventPublisher.emit({
+            type: 'channel-message-received',
+            channelId,
+            namespace,
+            message: {
+                id: message.id,
+                channelId: message.channelId,
+                namespace: message.namespace,
+                authorUserId: message.authorUserId,
+                kind: message.kind as 'text' | 'thread_card' | 'agent_summary',
+                body: message.body,
+                threadSessionId: message.threadSessionId,
+                createdAt: message.createdAt,
+                seq: message.seq
+            }
+        })
+        return message
+    }
+
+    getChannelMessages(channelId: string, opts?: { before?: number; limit?: number }): StoredChannelMessage[] {
+        return this.store.channelMessages.getMessages(channelId, opts)
+    }
+
+    getChannelMessagesSince(channelId: string, afterSeq: number, limit?: number): StoredChannelMessage[] {
+        return this.store.channelMessages.getMessagesSince(channelId, afterSeq, limit)
+    }
+
+    getSessionsByChannel(channelId: string, namespace: string): Session[] {
+        const stored = this.store.sessions.getSessionsByChannel(channelId, namespace)
+        return stored.map((s) => this.getSession(s.id)).filter((s): s is Session => s !== undefined)
+    }
+
+    detachSession(sessionId: string, channelId: string, namespace: string): void {
+        this.store.sessions.detachSession(sessionId, channelId, namespace)
+        this.sessionCache.refreshSession(sessionId)
+    }
+
+    ensureWorkspaceDefaults(
+        namespace: string,
+        userId: string,
+        displayName: string
+    ): { personalChannel: { id: string; name: string }; generalChannel: { id: string; name: string } } {
+        const result = this.store.workspaceUsers.ensureDefaults(namespace, userId, displayName)
+        this.channelCache.reloadAll()
+        return result
+    }
+
+    attachSessionToChannel(
+        sessionId: string,
+        channelId: string,
+        namespace: string,
+        threadTitle: string,
+        createdByUserId: string
+    ): void {
+        const attached = this.store.sessions.attachToChannel(sessionId, namespace, channelId, threadTitle, createdByUserId)
+        if (!attached) {
+            throw new Error(`Failed to attach session ${sessionId} to channel ${channelId}`)
+        }
+        this.sessionCache.refreshSession(sessionId)
+    }
+
+    createChannelInvite(channelId: string, namespace: string, createdBy: string): { id: string; expiresAt: number } {
+        const invite = this.store.channelInvites.createInvite(channelId, namespace, createdBy)
+        return { id: invite.id, expiresAt: invite.expiresAt }
+    }
+
+    acceptChannelInvite(inviteId: string, userId: string, requesterNamespace: string): { channelId: string; namespace: string } | null {
+        const invite = this.store.channelInvites.getInvite(inviteId)
+        if (!invite) return null
+        if (invite.expiresAt < Date.now()) {
+            this.store.channelInvites.deleteInvite(inviteId)
+            return null
+        }
+        if (invite.namespace !== requesterNamespace) return null
+        this.addChannelMember(invite.channelId, userId, 'member')
+        return { channelId: invite.channelId, namespace: invite.namespace }
+    }
+
+    createThreadInChannel(
+        channelId: string,
+        namespace: string,
+        userId: string,
+        threadTitle: string,
+        metadata?: unknown
+    ): Session {
+        const tag = `thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        return this.sessionCache.getOrCreateSession(
+            tag,
+            metadata ?? { path: '/' },
+            null,
+            namespace,
+            undefined,
+            undefined,
+            undefined,
+            { channelId, threadTitle, createdByUserId: userId }
+        )
+    }
+
+    updateThreadStatus(sessionId: string, namespace: string, status: 'active' | 'completed' | 'archived'): boolean {
+        const session = this.sessionCache.getSessionByNamespace(sessionId, namespace)
+        if (!session) return false
+        const updated = this.store.sessions.setThreadStatus(sessionId, namespace, status)
+        if (updated) {
+            this.sessionCache.refreshSession(sessionId)
+        }
+        return updated
+    }
+
+    getOnlineUserIds(namespace: string): string[] {
+        return this.sseManager.getOnlineUserIds(namespace)
+    }
+
+    getWorkspaceUser(namespace: string, userId: string) {
+        return this.store.workspaceUsers.getUser(namespace, userId)
     }
 }

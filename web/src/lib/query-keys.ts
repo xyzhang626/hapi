@@ -17,4 +17,9 @@ export const queryKeys = {
     slashCommands: (sessionId: string) => ['slash-commands', sessionId] as const,
     sessionCodexModels: (sessionId: string) => ['session-codex-models', sessionId] as const,
     skills: (sessionId: string) => ['skills', sessionId] as const,
+    channels: ['channels'] as const,
+    channel: (channelId: string) => ['channel', channelId] as const,
+    channelMessages: (channelId: string) => ['channel-messages', channelId] as const,
+    channelSessions: (channelId: string) => ['channel-sessions', channelId] as const,
+    channelMembers: (channelId: string) => ['channel-members', channelId] as const,
 }

@@ -1,6 +1,12 @@
 import type {
     AttachmentMetadata,
     AuthResponse,
+    ChannelInviteResponse,
+    ChannelMembersResponse,
+    ChannelMessagesResponse,
+    ChannelResponse,
+    ChannelSessionsResponse,
+    ChannelsResponse,
     CodexCollaborationMode,
     DeleteUploadResponse,
     ListDirectoryResponse,
@@ -455,5 +461,115 @@ export class ApiClient {
             method: 'POST',
             body: JSON.stringify(options || {})
         })
+    }
+
+    // --- Channel API ---
+
+    async getChannels(): Promise<ChannelsResponse> {
+        return await this.request('/api/channels')
+    }
+
+    async getChannel(channelId: string): Promise<ChannelResponse> {
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}`)
+    }
+
+    async createChannel(name: string, description?: string): Promise<ChannelResponse> {
+        return await this.request('/api/channels', {
+            method: 'POST',
+            body: JSON.stringify({ name, description })
+        })
+    }
+
+    async updateChannel(channelId: string, updates: { name?: string; description?: string | null }): Promise<ChannelResponse> {
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}`, {
+            method: 'PUT',
+            body: JSON.stringify(updates)
+        })
+    }
+
+    async deleteChannel(channelId: string): Promise<void> {
+        await this.request(`/api/channels/${encodeURIComponent(channelId)}`, {
+            method: 'DELETE'
+        })
+    }
+
+    async getChannelMembers(channelId: string): Promise<ChannelMembersResponse> {
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}/members`)
+    }
+
+    async addChannelMember(channelId: string, userId: string, role?: string): Promise<void> {
+        await this.request(`/api/channels/${encodeURIComponent(channelId)}/members`, {
+            method: 'POST',
+            body: JSON.stringify({ userId, role })
+        })
+    }
+
+    async removeChannelMember(channelId: string, userId: string): Promise<void> {
+        await this.request(`/api/channels/${encodeURIComponent(channelId)}/members/${encodeURIComponent(userId)}`, {
+            method: 'DELETE'
+        })
+    }
+
+    async getChannelMessages(channelId: string, opts?: { before?: number; limit?: number }): Promise<ChannelMessagesResponse> {
+        const params = new URLSearchParams()
+        if (opts?.before !== undefined) params.set('before', String(opts.before))
+        if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+        const qs = params.toString()
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}/messages${qs ? `?${qs}` : ''}`)
+    }
+
+    async sendChannelMessage(channelId: string, body: string, kind?: string): Promise<void> {
+        await this.request(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ body, kind: kind || 'text' })
+        })
+    }
+
+    async getChannelSessions(channelId: string): Promise<ChannelSessionsResponse> {
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}/sessions`)
+    }
+
+    async createThread(channelId: string, threadTitle: string): Promise<{ session: unknown }> {
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}/sessions`, {
+            method: 'POST',
+            body: JSON.stringify({ threadTitle })
+        })
+    }
+
+    async createChannelInvite(channelId: string): Promise<ChannelInviteResponse> {
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}/invite`, {
+            method: 'POST'
+        })
+    }
+
+    async acceptInvite(token: string): Promise<{ channelId: string }> {
+        return await this.request(`/api/invite/${encodeURIComponent(token)}`, {
+            method: 'POST'
+        })
+    }
+
+    async ensureWorkspaceDefaults(displayName: string): Promise<{ personalChannel: { id: string; name: string }; generalChannel: { id: string; name: string } }> {
+        return await this.request('/api/workspace/ensure-defaults', {
+            method: 'POST',
+            body: JSON.stringify({ displayName })
+        })
+    }
+
+    async updateSseSubscription(subscriptionId: string, activeThreadId: string | null): Promise<void> {
+        await this.request('/api/sse/subscription', {
+            method: 'PATCH',
+            body: JSON.stringify({ subscriptionId, activeThreadId })
+        })
+    }
+
+    async updateThreadStatus(sessionId: string, status: 'active' | 'completed' | 'archived'): Promise<void> {
+        await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/thread-status`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status })
+        })
+    }
+
+    async getSessionRoute(sessionId: string): Promise<{ channelId: string | null }> {
+        return await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/route`)
     }
 }

@@ -5,9 +5,11 @@ import type { VisibilityTracker } from '../visibility/visibilityTracker'
 export type SSESubscription = {
     id: string
     namespace: string
+    userId: string
     all: boolean
     sessionId: string | null
     machineId: string | null
+    activeThreadId: string | null
 }
 
 type SSEConnection = SSESubscription & {
@@ -20,18 +22,22 @@ export class SSEManager {
     private heartbeatTimer: NodeJS.Timeout | null = null
     private readonly heartbeatMs: number
     private readonly visibilityTracker: VisibilityTracker
+    private readonly membershipChecker: ((channelId: string, userId: string) => boolean) | null
 
-    constructor(heartbeatMs = 30_000, visibilityTracker: VisibilityTracker) {
+    constructor(heartbeatMs = 30_000, visibilityTracker: VisibilityTracker, membershipChecker?: (channelId: string, userId: string) => boolean) {
         this.heartbeatMs = heartbeatMs
         this.visibilityTracker = visibilityTracker
+        this.membershipChecker = membershipChecker ?? null
     }
 
     subscribe(options: {
         id: string
         namespace: string
+        userId?: string
         all?: boolean
         sessionId?: string | null
         machineId?: string | null
+        activeThreadId?: string | null
         visibility?: VisibilityState
         send: (event: SyncEvent) => void | Promise<void>
         sendHeartbeat: () => void | Promise<void>
@@ -39,9 +45,11 @@ export class SSEManager {
         const subscription: SSEConnection = {
             id: options.id,
             namespace: options.namespace,
+            userId: options.userId ?? '',
             all: Boolean(options.all),
             sessionId: options.sessionId ?? null,
             machineId: options.machineId ?? null,
+            activeThreadId: options.activeThreadId ?? null,
             send: options.send,
             sendHeartbeat: options.sendHeartbeat
         }
@@ -56,9 +64,11 @@ export class SSEManager {
         return {
             id: subscription.id,
             namespace: subscription.namespace,
+            userId: subscription.userId,
             all: subscription.all,
             sessionId: subscription.sessionId,
-            machineId: subscription.machineId
+            machineId: subscription.machineId,
+            activeThreadId: subscription.activeThreadId
         }
     }
 
@@ -68,6 +78,27 @@ export class SSEManager {
         if (this.connections.size === 0) {
             this.stopHeartbeat()
         }
+    }
+
+    updateSubscription(id: string, namespace: string, updates: { activeThreadId?: string | null }): boolean {
+        const connection = this.connections.get(id)
+        if (!connection || connection.namespace !== namespace) {
+            return false
+        }
+        if (updates.activeThreadId !== undefined) {
+            connection.activeThreadId = updates.activeThreadId
+        }
+        return true
+    }
+
+    getOnlineUserIds(namespace: string): string[] {
+        const userIds = new Set<string>()
+        for (const conn of this.connections.values()) {
+            if (conn.namespace === namespace && conn.userId) {
+                userIds.add(conn.userId)
+            }
+        }
+        return Array.from(userIds)
     }
 
     async sendToast(namespace: string, event: Extract<SyncEvent, { type: 'toast' }>): Promise<number> {
@@ -155,8 +186,22 @@ export class SSEManager {
             }
         }
 
+        if (event.type === 'channel-added' || event.type === 'channel-updated' || event.type === 'channel-removed'
+            || event.type === 'channel-message-received' || event.type === 'channel-member-added'
+            || event.type === 'channel-member-removed') {
+            if (!connection.userId) return false
+            if (event.type === 'channel-member-removed' && event.userId === connection.userId) {
+                return true
+            }
+            if (!this.membershipChecker) return false
+            return this.membershipChecker(event.channelId, connection.userId)
+        }
+
         if (event.type === 'message-received') {
-            return connection.all || connection.sessionId === event.sessionId
+            if (connection.all) return true
+            if (connection.sessionId === event.sessionId) return true
+            if (connection.activeThreadId && connection.activeThreadId === event.sessionId) return true
+            return false
         }
 
         if (event.type === 'connection-changed') {
@@ -168,6 +213,10 @@ export class SSEManager {
         }
 
         if ('sessionId' in event && connection.sessionId === event.sessionId) {
+            return true
+        }
+
+        if ('sessionId' in event && connection.activeThreadId && connection.activeThreadId === event.sessionId) {
             return true
         }
 

@@ -32,6 +32,11 @@ const visibilitySchema = z.object({
     visibility: z.enum(['visible', 'hidden'])
 })
 
+const subscriptionUpdateSchema = z.object({
+    subscriptionId: z.string().min(1),
+    activeThreadId: z.string().nullable()
+})
+
 export function createEventsRoutes(
     getSseManager: () => SSEManager | null,
     getSyncEngine: () => SyncEngine | null,
@@ -81,6 +86,7 @@ export function createEventsRoutes(
             manager.subscribe({
                 id: subscriptionId,
                 namespace,
+                userId: String(c.get('userId')),
                 all,
                 sessionId: resolvedSessionId,
                 machineId,
@@ -133,6 +139,31 @@ export function createEventsRoutes(
 
         const namespace = c.get('namespace')
         const updated = tracker.setVisibility(parsed.data.subscriptionId, namespace, parsed.data.visibility)
+        if (!updated) {
+            return c.json({ error: 'Subscription not found' }, 404)
+        }
+
+        return c.json({ ok: true })
+    })
+
+    app.patch('/sse/subscription', async (c) => {
+        const manager = getSseManager()
+        if (!manager) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const json = await c.req.json().catch(() => null)
+        const parsed = subscriptionUpdateSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const namespace = c.get('namespace')
+        const updated = manager.updateSubscription(
+            parsed.data.subscriptionId,
+            namespace,
+            { activeThreadId: parsed.data.activeThreadId }
+        )
         if (!updated) {
             return c.json({ error: 'Subscription not found' }, 404)
         }

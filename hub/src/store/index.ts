@@ -2,33 +2,50 @@ import { Database } from 'bun:sqlite'
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { ChannelMessageStore } from './channelMessageStore'
+import { ChannelStore } from './channelStore'
+import { ChannelInviteStore } from './channelInviteStore'
 import { MachineStore } from './machineStore'
 import { MessageStore } from './messageStore'
 import { PushStore } from './pushStore'
 import { SessionStore } from './sessionStore'
 import { UserStore } from './userStore'
+import { WorkspaceUserStore } from './workspaceUserStore'
 
 export type {
+    StoredChannel,
+    StoredChannelMember,
+    StoredChannelMessage,
     StoredMachine,
     StoredMessage,
     StoredPushSubscription,
     StoredSession,
     StoredUser,
+    StoredWorkspaceUser,
     VersionedUpdateResult
 } from './types'
+export { ChannelMessageStore } from './channelMessageStore'
+export { ChannelStore } from './channelStore'
+export { ChannelInviteStore } from './channelInviteStore'
 export { MachineStore } from './machineStore'
 export { MessageStore } from './messageStore'
 export { PushStore } from './pushStore'
 export { SessionStore } from './sessionStore'
 export { UserStore } from './userStore'
+export { WorkspaceUserStore } from './workspaceUserStore'
 
-const SCHEMA_VERSION: number = 7
+const SCHEMA_VERSION: number = 9
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
     'messages',
     'users',
-    'push_subscriptions'
+    'push_subscriptions',
+    'channels',
+    'channel_members',
+    'channel_messages',
+    'workspace_users',
+    'channel_invites'
 ] as const
 
 export class Store {
@@ -40,6 +57,10 @@ export class Store {
     readonly messages: MessageStore
     readonly users: UserStore
     readonly push: PushStore
+    readonly channels: ChannelStore
+    readonly channelMessages: ChannelMessageStore
+    readonly channelInvites: ChannelInviteStore
+    readonly workspaceUsers: WorkspaceUserStore
 
     constructor(dbPath: string) {
         this.dbPath = dbPath
@@ -81,6 +102,10 @@ export class Store {
         this.messages = new MessageStore(this.db)
         this.users = new UserStore(this.db)
         this.push = new PushStore(this.db)
+        this.channels = new ChannelStore(this.db)
+        this.channelMessages = new ChannelMessageStore(this.db)
+        this.channelInvites = new ChannelInviteStore(this.db)
+        this.workspaceUsers = new WorkspaceUserStore(this.db)
     }
 
     private initSchema(): void {
@@ -134,6 +159,19 @@ export class Store {
             return
         }
 
+        if (currentVersion === 7 && SCHEMA_VERSION === 9) {
+            this.migrateFromV7ToV8()
+            this.migrateFromV8ToV9()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 8 && SCHEMA_VERSION === 9) {
+            this.migrateFromV8ToV9()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
         if (currentVersion === 4 && SCHEMA_VERSION === 6) {
             this.migrateFromV4ToV5()
             this.migrateFromV5ToV6()
@@ -152,6 +190,33 @@ export class Store {
         if (currentVersion === 5 && SCHEMA_VERSION === 7) {
             this.migrateFromV5ToV6()
             this.migrateFromV6ToV7()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 4 && SCHEMA_VERSION === 9) {
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.migrateFromV6ToV7()
+            this.migrateFromV7ToV8()
+            this.migrateFromV8ToV9()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 5 && SCHEMA_VERSION === 9) {
+            this.migrateFromV5ToV6()
+            this.migrateFromV6ToV7()
+            this.migrateFromV7ToV8()
+            this.migrateFromV8ToV9()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 6 && SCHEMA_VERSION === 9) {
+            this.migrateFromV6ToV7()
+            this.migrateFromV7ToV8()
+            this.migrateFromV8ToV9()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -185,10 +250,15 @@ export class Store {
                 team_state_updated_at INTEGER,
                 active INTEGER DEFAULT 0,
                 active_at INTEGER,
-                seq INTEGER DEFAULT 0
+                seq INTEGER DEFAULT 0,
+                channel_id TEXT REFERENCES channels(id) ON DELETE RESTRICT,
+                thread_title TEXT,
+                thread_status TEXT DEFAULT 'active',
+                created_by_user_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag);
             CREATE INDEX IF NOT EXISTS idx_sessions_tag_namespace ON sessions(tag, namespace);
+            CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(namespace, channel_id);
 
             CREATE TABLE IF NOT EXISTS machines (
                 id TEXT PRIMARY KEY,
@@ -238,6 +308,64 @@ export class Store {
                 UNIQUE(namespace, endpoint)
             );
             CREATE INDEX IF NOT EXISTS idx_push_subscriptions_namespace ON push_subscriptions(namespace);
+
+            CREATE TABLE IF NOT EXISTS channels (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                agent_config TEXT,
+                created_by TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                next_seq INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_channels_namespace ON channels(namespace);
+
+            CREATE TABLE IF NOT EXISTS channel_members (
+                channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                joined_at INTEGER NOT NULL,
+                PRIMARY KEY (channel_id, user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_members_user ON channel_members(user_id);
+
+            CREATE TABLE IF NOT EXISTS workspace_users (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                avatar_url TEXT,
+                personal_channel_id TEXT REFERENCES channels(id),
+                created_at INTEGER NOT NULL,
+                last_active_at INTEGER NOT NULL,
+                UNIQUE(namespace, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS channel_messages (
+                id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                namespace TEXT NOT NULL,
+                author_user_id TEXT,
+                kind TEXT NOT NULL DEFAULT 'text',
+                body TEXT NOT NULL,
+                thread_session_id TEXT,
+                created_at INTEGER NOT NULL,
+                seq INTEGER NOT NULL,
+                UNIQUE(channel_id, seq)
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_messages_channel ON channel_messages(channel_id, seq);
+
+            CREATE TABLE IF NOT EXISTS channel_invites (
+                id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                namespace TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_invites_channel ON channel_invites(channel_id);
         `)
     }
 
@@ -359,6 +487,107 @@ export class Store {
         const columns = this.getSessionColumnNames()
         if (!columns.has('model_reasoning_effort')) {
             this.db.exec('ALTER TABLE sessions ADD COLUMN model_reasoning_effort TEXT')
+        }
+    }
+
+    private migrateFromV7ToV8(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS channels (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                agent_config TEXT,
+                created_by TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                next_seq INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_channels_namespace ON channels(namespace);
+
+            CREATE TABLE IF NOT EXISTS channel_members (
+                channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                joined_at INTEGER NOT NULL,
+                PRIMARY KEY (channel_id, user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_members_user ON channel_members(user_id);
+
+            CREATE TABLE IF NOT EXISTS workspace_users (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                avatar_url TEXT,
+                personal_channel_id TEXT REFERENCES channels(id),
+                created_at INTEGER NOT NULL,
+                last_active_at INTEGER NOT NULL,
+                UNIQUE(namespace, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS channel_messages (
+                id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                namespace TEXT NOT NULL,
+                author_user_id TEXT,
+                kind TEXT NOT NULL DEFAULT 'text',
+                body TEXT NOT NULL,
+                thread_session_id TEXT,
+                created_at INTEGER NOT NULL,
+                seq INTEGER NOT NULL,
+                UNIQUE(channel_id, seq)
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_messages_channel ON channel_messages(channel_id, seq);
+        `)
+
+        const sessionColumns = this.getSessionColumnNames()
+        if (!sessionColumns.has('channel_id')) {
+            this.db.exec('ALTER TABLE sessions ADD COLUMN channel_id TEXT')
+        }
+        if (!sessionColumns.has('thread_title')) {
+            this.db.exec('ALTER TABLE sessions ADD COLUMN thread_title TEXT')
+        }
+        if (!sessionColumns.has('thread_status')) {
+            this.db.exec("ALTER TABLE sessions ADD COLUMN thread_status TEXT DEFAULT 'active'")
+        }
+        if (!sessionColumns.has('created_by_user_id')) {
+            this.db.exec('ALTER TABLE sessions ADD COLUMN created_by_user_id TEXT')
+        }
+        this.db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(namespace, channel_id)')
+    }
+
+    private migrateFromV8ToV9(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS channel_invites (
+                id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                namespace TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_invites_channel ON channel_invites(channel_id);
+        `)
+
+        // Data migration: auto-create workspace defaults for existing sessions
+        // This handles existing CLIs that created sessions before the channel system existed
+        const namespaces = this.db.prepare(
+            'SELECT DISTINCT namespace FROM sessions WHERE channel_id IS NULL'
+        ).all() as Array<{ namespace: string }>
+        for (const { namespace } of namespaces) {
+            try {
+                const wuStore = new WorkspaceUserStore(this.db)
+                wuStore.ensureDefaults(namespace, namespace, namespace)
+                const personalChannelId = wuStore.getPersonalChannelId(namespace, namespace)
+                if (personalChannelId) {
+                    this.db.prepare(
+                        'UPDATE sessions SET channel_id = ? WHERE namespace = ? AND channel_id IS NULL'
+                    ).run(personalChannelId, namespace)
+                }
+            } catch {
+                // best-effort: some namespaces may fail if channels already exist
+            }
         }
     }
 

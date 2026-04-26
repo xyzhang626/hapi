@@ -8,6 +8,7 @@ import { validateTelegramInitData } from '../telegramInitData'
 import { getOrCreateOwnerId } from '../../config/ownerId'
 import type { WebAppEnv } from '../middleware/auth'
 import type { Store } from '../../store'
+import type { SyncEngine } from '../../sync/syncEngine'
 
 const telegramAuthSchema = z.object({
     initData: z.string()
@@ -19,7 +20,11 @@ const accessTokenAuthSchema = z.object({
 
 const authBodySchema = z.union([telegramAuthSchema, accessTokenAuthSchema])
 
-export function createAuthRoutes(jwtSecret: Uint8Array, store: Store): Hono<WebAppEnv> {
+export function createAuthRoutes(
+    jwtSecret: Uint8Array,
+    store: Store,
+    getSyncEngine?: () => SyncEngine | null
+): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
     app.post('/auth', async (c) => {
@@ -66,6 +71,14 @@ export function createAuthRoutes(jwtSecret: Uint8Array, store: Store): Hono<WebA
             firstName = result.user.first_name
             lastName = result.user.last_name
             namespace = storedUser.namespace
+        }
+
+        const displayName = [firstName, lastName].filter(Boolean).join(' ') || `user-${userId}`
+        const engine = getSyncEngine?.()
+        if (engine) {
+            engine.ensureWorkspaceDefaults(namespace, String(userId), displayName)
+        } else {
+            store.workspaceUsers.ensureDefaults(namespace, String(userId), displayName)
         }
 
         const token = await new SignJWT({ uid: userId, ns: namespace })

@@ -180,10 +180,64 @@ export const SessionSchema = z.object({
     modelReasoningEffort: z.string().nullable().optional().default(null),
     effort: z.string().nullable().optional().default(null),
     permissionMode: PermissionModeSchema.optional(),
-    collaborationMode: CodexCollaborationModeSchema.optional()
+    collaborationMode: CodexCollaborationModeSchema.optional(),
+    channelId: z.string().optional(),
+    threadTitle: z.string().optional(),
+    threadStatus: z.enum(['active', 'completed', 'archived']).optional(),
+    createdByUserId: z.string().optional()
 })
 
 export type Session = z.infer<typeof SessionSchema>
+
+export const ChannelSchema = z.object({
+    id: z.string(),
+    workspaceId: z.string(),
+    name: z.string(),
+    description: z.string().nullable(),
+    agentConfig: z.unknown().nullable(),
+    createdBy: z.string(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    nextSeq: z.number()
+})
+
+export type Channel = z.infer<typeof ChannelSchema>
+
+export const ChannelMemberSchema = z.object({
+    channelId: z.string(),
+    userId: z.string(),
+    role: z.enum(['owner', 'member']),
+    joinedAt: z.number()
+})
+
+export type ChannelMember = z.infer<typeof ChannelMemberSchema>
+
+export const ChannelMessageSchema = z.object({
+    id: z.string(),
+    channelId: z.string(),
+    namespace: z.string(),
+    authorUserId: z.string().nullable(),
+    kind: z.enum(['text', 'thread_card', 'agent_summary']),
+    body: z.unknown(),
+    threadSessionId: z.string().nullable(),
+    createdAt: z.number(),
+    seq: z.number()
+})
+
+export type ChannelMessage = z.infer<typeof ChannelMessageSchema>
+
+export const WorkspaceUserSchema = z.object({
+    id: z.string(),
+    namespace: z.string(),
+    userId: z.string(),
+    displayName: z.string(),
+    avatarUrl: z.string().nullable(),
+    personalChannelId: z.string().nullable(),
+    createdAt: z.number(),
+    lastActiveAt: z.number()
+})
+
+export type WorkspaceUser = z.infer<typeof WorkspaceUserSchema>
 
 const SessionEventBaseSchema = z.object({
     namespace: z.string().optional()
@@ -195,6 +249,10 @@ const SessionChangedSchema = SessionEventBaseSchema.extend({
 
 const MachineChangedSchema = SessionEventBaseSchema.extend({
     machineId: z.string()
+})
+
+const ChannelChangedSchema = SessionEventBaseSchema.extend({
+    channelId: z.string()
 })
 
 export const SyncEventSchema = z.discriminatedUnion('type', [
@@ -246,6 +304,29 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
             status: z.string(),
             subscriptionId: z.string().optional()
         }).optional()
+    }),
+    ChannelChangedSchema.extend({
+        type: z.literal('channel-added'),
+        data: z.unknown().optional()
+    }),
+    ChannelChangedSchema.extend({
+        type: z.literal('channel-updated'),
+        data: z.unknown().optional()
+    }),
+    ChannelChangedSchema.extend({
+        type: z.literal('channel-removed')
+    }),
+    ChannelChangedSchema.extend({
+        type: z.literal('channel-message-received'),
+        message: ChannelMessageSchema
+    }),
+    ChannelChangedSchema.extend({
+        type: z.literal('channel-member-added'),
+        userId: z.string()
+    }),
+    ChannelChangedSchema.extend({
+        type: z.literal('channel-member-removed'),
+        userId: z.string()
     })
 ])
 

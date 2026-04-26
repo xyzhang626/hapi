@@ -19,6 +19,10 @@ export type StoredSession = {
     active: boolean
     activeAt: number | null
     seq: number
+    channelId: string | null
+    threadTitle: string | null
+    threadStatus: string | null
+    createdByUserId: string | null
 }
 
 export type StoredMachine = {
@@ -59,6 +63,48 @@ export type StoredPushSubscription = {
     p256dh: string
     auth: string
     createdAt: number
+}
+
+export type StoredChannel = {
+    id: string
+    namespace: string
+    name: string
+    description: string | null
+    agentConfig: unknown | null
+    createdBy: string
+    createdAt: number
+    updatedAt: number
+    nextSeq: number
+}
+
+export type StoredChannelMember = {
+    channelId: string
+    userId: string
+    role: string
+    joinedAt: number
+}
+
+export type StoredChannelMessage = {
+    id: string
+    channelId: string
+    namespace: string
+    authorUserId: string | null
+    kind: string
+    body: unknown
+    threadSessionId: string | null
+    createdAt: number
+    seq: number
+}
+
+export type StoredWorkspaceUser = {
+    id: string
+    namespace: string
+    userId: string
+    displayName: string
+    avatarUrl: string | null
+    personalChannelId: string | null
+    createdAt: number
+    lastActiveAt: number
 }
 
 export type VersionedUpdateResult<T> =

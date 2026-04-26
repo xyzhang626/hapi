@@ -19,6 +19,7 @@ import { createGitRoutes } from './routes/git'
 import { createCliRoutes } from './routes/cli'
 import { createPushRoutes } from './routes/push'
 import { createVoiceRoutes } from './routes/voice'
+import { createChannelsRoutes } from './routes/channels'
 import type { SSEManager } from '../sse/sseManager'
 import type { VisibilityTracker } from '../visibility/visibilityTracker'
 import type { Server as BunServer } from 'bun'
@@ -85,7 +86,7 @@ function createWebApp(options: {
 
     app.route('/cli', createCliRoutes(options.getSyncEngine))
 
-    app.route('/api', createAuthRoutes(options.jwtSecret, options.store))
+    app.route('/api', createAuthRoutes(options.jwtSecret, options.store, options.getSyncEngine))
     app.route('/api', createBindRoutes(options.jwtSecret, options.store))
 
     app.use('/api/*', createAuthMiddleware(options.jwtSecret))
@@ -97,6 +98,7 @@ function createWebApp(options: {
     app.route('/api', createGitRoutes(options.getSyncEngine))
     app.route('/api', createPushRoutes(options.store, options.vapidPublicKey))
     app.route('/api', createVoiceRoutes())
+    app.route('/api', createChannelsRoutes(options.getSyncEngine))
 
     // Skip static serving in relay mode, show helpful message on root
     if (options.relayMode) {

@@ -23,8 +23,12 @@ export class SessionCache {
         return Array.from(this.sessions.values())
     }
 
-    getSessionsByNamespace(namespace: string): Session[] {
-        return this.getSessions().filter((session) => session.namespace === namespace)
+    getSessionsByNamespace(namespace: string, opts?: { channelId?: string }): Session[] {
+        const sessions = this.getSessions().filter((session) => session.namespace === namespace)
+        if (opts?.channelId) {
+            return sessions.filter((session) => session.channelId === opts.channelId)
+        }
+        return sessions
     }
 
     getSession(sessionId: string): Session | undefined {
@@ -65,9 +69,10 @@ export class SessionCache {
         namespace: string,
         model?: string,
         effort?: string,
-        modelReasoningEffort?: string
+        modelReasoningEffort?: string,
+        channelOpts?: { channelId?: string; threadTitle?: string; createdByUserId?: string }
     ): Session {
-        const stored = this.store.sessions.getOrCreateSession(tag, metadata, agentState, namespace, model, effort, modelReasoningEffort)
+        const stored = this.store.sessions.getOrCreateSession(tag, metadata, agentState, namespace, model, effort, modelReasoningEffort, channelOpts)
         return this.refreshSession(stored.id) ?? (() => { throw new Error('Failed to load session') })()
     }
 
@@ -142,7 +147,11 @@ export class SessionCache {
             modelReasoningEffort: stored.modelReasoningEffort,
             effort: stored.effort,
             permissionMode: existing?.permissionMode,
-            collaborationMode: existing?.collaborationMode
+            collaborationMode: existing?.collaborationMode,
+            channelId: stored.channelId ?? undefined,
+            threadTitle: stored.threadTitle ?? undefined,
+            threadStatus: (stored.threadStatus as 'active' | 'completed' | 'archived') ?? undefined,
+            createdByUserId: stored.createdByUserId ?? undefined
         }
 
         this.sessions.set(sessionId, session)

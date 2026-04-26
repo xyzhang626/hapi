@@ -546,6 +546,19 @@ export function useSSE(options: {
                 }
             }
 
+            if (event.type === 'channel-added' || event.type === 'channel-updated' || event.type === 'channel-removed') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.channels })
+            }
+
+            if (event.type === 'channel-message-received') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.channelMessages(event.channelId) })
+            }
+
+            if (event.type === 'channel-member-added' || event.type === 'channel-member-removed') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.channels })
+                void queryClient.invalidateQueries({ queryKey: queryKeys.channelMembers(event.channelId) })
+            }
+
             onEventRef.current(event)
         }
 

@@ -26,6 +26,10 @@ type DbSessionRow = {
     active: number
     active_at: number | null
     seq: number
+    channel_id: string | null
+    thread_title: string | null
+    thread_status: string | null
+    created_by_user_id: string | null
 }
 
 function toStoredSession(row: DbSessionRow): StoredSession {
@@ -49,7 +53,11 @@ function toStoredSession(row: DbSessionRow): StoredSession {
         teamStateUpdatedAt: row.team_state_updated_at,
         active: row.active === 1,
         activeAt: row.active_at,
-        seq: row.seq
+        seq: row.seq,
+        channelId: row.channel_id,
+        threadTitle: row.thread_title,
+        threadStatus: row.thread_status,
+        createdByUserId: row.created_by_user_id
     }
 }
 
@@ -61,7 +69,8 @@ export function getOrCreateSession(
     namespace: string,
     model?: string,
     effort?: string,
-    modelReasoningEffort?: string
+    modelReasoningEffort?: string,
+    channelOpts?: { channelId?: string; threadTitle?: string; createdByUserId?: string }
 ): StoredSession {
     const existing = db.prepare(
         'SELECT * FROM sessions WHERE tag = ? AND namespace = ? ORDER BY created_at DESC LIMIT 1'
@@ -86,7 +95,8 @@ export function getOrCreateSession(
             model_reasoning_effort,
             effort,
             todos, todos_updated_at,
-            active, active_at, seq
+            active, active_at, seq,
+            channel_id, thread_title, thread_status, created_by_user_id
         ) VALUES (
             @id, @tag, @namespace, NULL, @created_at, @updated_at,
             @metadata, 1,
@@ -95,7 +105,8 @@ export function getOrCreateSession(
             @model_reasoning_effort,
             @effort,
             NULL, NULL,
-            0, NULL, 0
+            0, NULL, 0,
+            @channel_id, @thread_title, @thread_status, @created_by_user_id
         )
     `).run({
         id,
@@ -107,7 +118,11 @@ export function getOrCreateSession(
         agent_state: agentStateJson,
         model: model ?? null,
         model_reasoning_effort: modelReasoningEffort ?? null,
-        effort: effort ?? null
+        effort: effort ?? null,
+        channel_id: channelOpts?.channelId ?? null,
+        thread_title: channelOpts?.threadTitle ?? null,
+        thread_status: channelOpts?.channelId ? 'active' : null,
+        created_by_user_id: channelOpts?.createdByUserId ?? null
     })
 
     const row = getSession(db, id)
@@ -385,7 +400,17 @@ export function getSessions(db: Database): StoredSession[] {
     return rows.map(toStoredSession)
 }
 
-export function getSessionsByNamespace(db: Database, namespace: string): StoredSession[] {
+export function getSessionsByNamespace(
+    db: Database,
+    namespace: string,
+    opts?: { channelId?: string }
+): StoredSession[] {
+    if (opts?.channelId) {
+        const rows = db.prepare(
+            'SELECT * FROM sessions WHERE namespace = ? AND channel_id = ? ORDER BY updated_at DESC'
+        ).all(namespace, opts.channelId) as DbSessionRow[]
+        return rows.map(toStoredSession)
+    }
     const rows = db.prepare(
         'SELECT * FROM sessions WHERE namespace = ? ORDER BY updated_at DESC'
     ).all(namespace) as DbSessionRow[]
@@ -397,4 +422,62 @@ export function deleteSession(db: Database, id: string, namespace: string): bool
         'DELETE FROM sessions WHERE id = ? AND namespace = ?'
     ).run(id, namespace)
     return result.changes > 0
+}
+
+export function getSessionsByChannel(db: Database, channelId: string, namespace: string): StoredSession[] {
+    const rows = db.prepare(
+        'SELECT * FROM sessions WHERE channel_id = @channel_id AND namespace = @namespace ORDER BY updated_at DESC'
+    ).all({ channel_id: channelId, namespace }) as DbSessionRow[]
+    return rows.map(toStoredSession)
+}
+
+export function detachSessionsFromChannel(db: Database, channelId: string, namespace: string): number {
+    const result = db.prepare(
+        'UPDATE sessions SET channel_id = NULL WHERE channel_id = @channel_id AND namespace = @namespace'
+    ).run({ channel_id: channelId, namespace })
+    return result.changes
+}
+
+export function detachSession(db: Database, sessionId: string, channelId: string, namespace: string): boolean {
+    const result = db.prepare(
+        'UPDATE sessions SET channel_id = NULL WHERE id = @id AND namespace = @namespace AND channel_id = @channel_id'
+    ).run({ id: sessionId, namespace, channel_id: channelId })
+    return result.changes === 1
+}
+
+export function setThreadStatus(
+    db: Database,
+    sessionId: string,
+    namespace: string,
+    status: 'active' | 'completed' | 'archived'
+): boolean {
+    const now = Date.now()
+    const result = db.prepare(
+        'UPDATE sessions SET thread_status = @status, updated_at = @updated_at, seq = seq + 1 WHERE id = @id AND namespace = @namespace'
+    ).run({ status, updated_at: now, id: sessionId, namespace })
+    return result.changes === 1
+}
+
+export function attachToChannel(
+    db: Database,
+    sessionId: string,
+    namespace: string,
+    channelId: string,
+    threadTitle: string,
+    createdByUserId: string
+): boolean {
+    const now = Date.now()
+    const result = db.prepare(
+        `UPDATE sessions SET channel_id = @channel_id, thread_title = @thread_title, thread_status = 'active',
+         created_by_user_id = @created_by_user_id, updated_at = @updated_at, seq = seq + 1
+         WHERE id = @id AND namespace = @namespace`
+    ).run({
+        channel_id: channelId,
+        thread_title: threadTitle,
+        created_by_user_id: createdByUserId,
+        updated_at: now,
+        id: sessionId,
+        namespace
+    })
+    return result.changes === 1
 }

@@ -32,6 +32,10 @@ import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
 import { clearDraftsAfterSend } from '@/lib/clearDraftsAfterSend'
+import { ChannelList } from '@/components/ChannelList'
+import { ChannelView } from '@/components/ChannelView'
+import { useChannels, useChannelMessages, useChannelSessions } from '@/hooks/queries/useChannels'
+import { useWorkspaceDefaults } from '@/hooks/queries/useWorkspaceDefaults'
 import type { Machine } from '@/types/api'
 import FilesPage from '@/routes/sessions/files'
 import FilePage from '@/routes/sessions/file'
@@ -423,6 +427,225 @@ function NewSessionPage() {
     )
 }
 
+function ChannelsPage() {
+    const { api } = useAppContext()
+    const navigate = useNavigate()
+    const params = useParams({ strict: false }) as { channelId?: string; sessionId?: string }
+    const selectedChannelId = params.channelId
+    const { channels, isLoading } = useChannels(api)
+    const { personalChannelId } = useWorkspaceDefaults(api, 'user')
+    const { messages, refetch: refetchMessages } = useChannelMessages(api, selectedChannelId)
+    const { sessions: channelSessions } = useChannelSessions(api, selectedChannelId)
+    const { width: sidebarWidth, onPointerDown: handleResizePointerDown } = useSidebarResize()
+
+    const selectedChannel = channels.find((c) => c.id === selectedChannelId) ?? null
+
+    const handleSelectChannel = useCallback((channelId: string) => {
+        navigate({ to: '/channels/$channelId', params: { channelId } })
+    }, [navigate])
+
+    const handleOpenThread = useCallback((sessionId: string) => {
+        if (selectedChannelId) {
+            navigate({
+                to: '/channels/$channelId/threads/$sessionId',
+                params: { channelId: selectedChannelId, sessionId }
+            })
+        }
+    }, [navigate, selectedChannelId])
+
+    const handleRefreshMessages = useCallback(() => {
+        void refetchMessages()
+    }, [refetchMessages])
+
+    if (params.sessionId && selectedChannelId) {
+        return <Outlet />
+    }
+
+    return (
+        <div className="relative flex h-dvh" style={{ background: 'var(--app-bg)', color: 'var(--app-fg)' }}>
+            <div
+                className="flex flex-col border-r"
+                style={{
+                    width: `${sidebarWidth}px`,
+                    minWidth: '200px',
+                    maxWidth: '400px',
+                    borderColor: 'var(--app-border)',
+                    background: 'var(--app-secondary-bg)',
+                }}
+            >
+                <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--app-border)' }}>
+                    <span className="font-semibold text-sm">HAPI</span>
+                    <button
+                        onClick={() => navigate({ to: '/settings' })}
+                        className="p-1 rounded"
+                        style={{ color: 'var(--app-hint)' }}
+                    >
+                        <SettingsIcon />
+                    </button>
+                </div>
+                {isLoading ? (
+                    <LoadingState />
+                ) : api ? (
+                    <ChannelList
+                        api={api}
+                        channels={channels}
+                        selectedChannelId={selectedChannelId}
+                        personalChannelId={personalChannelId ?? undefined}
+                        onSelectChannel={handleSelectChannel}
+                    />
+                ) : null}
+            </div>
+
+            <div
+                className="sidebar-resize-handle"
+                onPointerDown={handleResizePointerDown}
+            />
+
+            <div className="flex-1 min-w-0 flex flex-col">
+                {selectedChannel && api ? (
+                    <ChannelView
+                        api={api}
+                        channel={selectedChannel}
+                        messages={messages}
+                        sessions={channelSessions as any}
+                        onOpenThread={handleOpenThread}
+                        onRefresh={handleRefreshMessages}
+                    />
+                ) : (
+                    <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--app-hint)' }}>
+                        <p className="text-sm">Select a channel</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
+function ChannelThreadPage() {
+    const { api } = useAppContext()
+    const params = useParams({ strict: false }) as { channelId?: string; sessionId?: string }
+    const navigate = useNavigate()
+    const queryClient = useQueryClient()
+    const { addToast } = useToast()
+
+    const sessionId = params.sessionId ?? ''
+    const channelId = params.channelId ?? ''
+
+    const { session, refetch: refetchSession } = useSession(api, sessionId)
+    const {
+        messages,
+        warning: messagesWarning,
+        isLoading: messagesLoading,
+        isLoadingMore: messagesLoadingMore,
+        hasMore: messagesHasMore,
+        loadMore: loadMoreMessages,
+        refetch: refetchMessages,
+        pendingCount,
+        messagesVersion,
+        flushPending,
+        setAtBottom,
+    } = useMessages(api, sessionId)
+    const {
+        sendMessage,
+        retryMessage,
+        isSending,
+    } = useSendMessage(api, sessionId, {
+        isSessionThinking: session?.thinking ?? false,
+        onSuccess: (sentSessionId) => {
+            clearDraftsAfterSend(sentSessionId, sessionId)
+        },
+        resolveSessionId: async (currentSessionId) => {
+            if (!api || !session || session.active) {
+                return currentSessionId
+            }
+            try {
+                return await api.resumeSession(currentSessionId)
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Resume failed'
+                addToast({ title: 'Resume failed', body: message, sessionId: currentSessionId, url: '' })
+                throw error
+            }
+        },
+        onSessionResolved: (resolvedSessionId) => {
+            void (async () => {
+                if (api) {
+                    if (session && resolvedSessionId !== session.id) {
+                        seedMessageWindowFromSession(session.id, resolvedSessionId)
+                        queryClient.setQueryData(queryKeys.session(resolvedSessionId), {
+                            session: { ...session, id: resolvedSessionId, active: true }
+                        })
+                    }
+                    try {
+                        await Promise.all([
+                            queryClient.prefetchQuery({
+                                queryKey: queryKeys.session(resolvedSessionId),
+                                queryFn: () => api.getSession(resolvedSessionId),
+                            }),
+                            fetchLatestMessages(api, resolvedSessionId),
+                        ])
+                    } catch {}
+                }
+                navigate({
+                    to: '/channels/$channelId/threads/$sessionId',
+                    params: { channelId, sessionId: resolvedSessionId },
+                    replace: true
+                })
+            })()
+        },
+        onBlocked: (reason) => {
+            if (reason === 'no-api') {
+                addToast({ title: 'Blocked', body: 'No connection', sessionId: sessionId ?? '', url: '' })
+            }
+        }
+    })
+
+    const agentType = session?.metadata?.flavor ?? 'claude'
+    const { commands: slashCommands, getSuggestions: getSlashSuggestions } = useSlashCommands(api, sessionId, agentType)
+    const { getSuggestions: getSkillSuggestions } = useSkills(api, sessionId)
+
+    const getAutocompleteSuggestions = useCallback(async (query: string) => {
+        if (query.startsWith('$')) return await getSkillSuggestions(query)
+        return await getSlashSuggestions(query)
+    }, [getSkillSuggestions, getSlashSuggestions])
+
+    const refreshAll = useCallback(() => {
+        void refetchSession()
+        void refetchMessages()
+    }, [refetchMessages, refetchSession])
+
+    const handleBack = useCallback(() => {
+        navigate({ to: '/channels/$channelId', params: { channelId } })
+    }, [navigate, channelId])
+
+    if (!session) {
+        return <LoadingState label="Loading thread…" className="text-sm" />
+    }
+
+    return (
+        <SessionChat
+            api={api!}
+            session={session}
+            messages={messages}
+            messagesWarning={messagesWarning}
+            hasMoreMessages={messagesHasMore}
+            isLoadingMessages={messagesLoading}
+            isLoadingMoreMessages={messagesLoadingMore}
+            isSending={isSending}
+            pendingCount={pendingCount}
+            messagesVersion={messagesVersion}
+            onBack={handleBack}
+            onRefresh={refreshAll}
+            onLoadMore={loadMoreMessages}
+            onSend={sendMessage}
+            onFlushPending={flushPending}
+            onAtBottomChange={setAtBottom}
+            onRetryMessage={retryMessage}
+            autocompleteSuggestions={getAutocompleteSuggestions}
+            availableSlashCommands={slashCommands}
+        />
+    )
+}
+
 const rootRoute = createRootRoute({
     component: App,
 })
@@ -430,7 +653,7 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/',
-    component: () => <Navigate to="/sessions" replace />,
+    component: () => <Navigate to="/channels" replace />,
 })
 
 const sessionsRoute = createRoute({
@@ -521,6 +744,36 @@ const settingsRoute = createRoute({
     component: SettingsPage,
 })
 
+const channelsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/channels',
+    component: ChannelsPage,
+})
+
+const channelsIndexRoute = createRoute({
+    getParentRoute: () => channelsRoute,
+    path: '/',
+    component: () => null,
+})
+
+const channelDetailRoute = createRoute({
+    getParentRoute: () => channelsRoute,
+    path: '$channelId',
+    component: () => <Outlet />,
+})
+
+const channelIndexRoute = createRoute({
+    getParentRoute: () => channelDetailRoute,
+    path: '/',
+    component: () => null,
+})
+
+const channelThreadRoute = createRoute({
+    getParentRoute: () => channelDetailRoute,
+    path: 'threads/$sessionId',
+    component: ChannelThreadPage,
+})
+
 export const routeTree = rootRoute.addChildren([
     indexRoute,
     sessionsRoute.addChildren([
@@ -530,6 +783,13 @@ export const routeTree = rootRoute.addChildren([
             sessionTerminalRoute,
             sessionFilesRoute,
             sessionFileRoute,
+        ]),
+    ]),
+    channelsRoute.addChildren([
+        channelsIndexRoute,
+        channelDetailRoute.addChildren([
+            channelIndexRoute,
+            channelThreadRoute,
         ]),
     ]),
     settingsRoute,
