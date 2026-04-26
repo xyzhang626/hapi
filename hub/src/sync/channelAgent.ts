@@ -87,7 +87,10 @@ export class ChannelAgent {
         }
 
         if (queue.active.size < MAX_ACTIVE_PER_CHANNEL) {
-            this.startTask(entry, queue)
+            this.startTask(entry, queue).catch((err) => {
+                console.error('[ChannelAgent] startTask failed:', err)
+                this.releaseTask(entry, queue, 'internal_error')
+            })
         } else if (queue.queue.length < MAX_QUEUED_PER_CHANNEL) {
             queue.queue.push(entry)
         }
@@ -234,7 +237,10 @@ export class ChannelAgent {
 
         while (queue.active.size < MAX_ACTIVE_PER_CHANNEL && queue.queue.length > 0) {
             const next = queue.queue.shift()!
-            this.startTask(next, queue)
+            this.startTask(next, queue).catch((err) => {
+                console.error('[ChannelAgent] startTask failed:', err)
+                this.releaseTask(next, queue, 'internal_error')
+            })
         }
     }
 

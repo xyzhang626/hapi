@@ -23,13 +23,18 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
         }
     }, [messages.length])
 
+    const [sendError, setSendError] = useState<string | null>(null)
+
     const handleSend = async () => {
         if (!input.trim() || sending) return
         setSending(true)
+        setSendError(null)
         try {
             await api.sendChannelMessage(channel.id, input.trim())
             setInput('')
             onRefresh()
+        } catch (err) {
+            setSendError(err instanceof Error ? err.message : 'Failed to send message')
         } finally {
             setSending(false)
         }
@@ -91,6 +96,9 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
             </div>
 
             <div className="px-4 py-3 border-t" style={{ borderColor: 'var(--app-border)' }}>
+                {sendError && (
+                    <div className="text-xs text-red-500 mb-2">{sendError}</div>
+                )}
                 <div className="flex gap-2">
                     <input
                         type="text"
