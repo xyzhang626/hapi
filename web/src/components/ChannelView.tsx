@@ -147,18 +147,21 @@ function ChannelMessageItem({
         ? tryParseText(message.body)
         : String(message.body)
 
+    const authorName = (message as Record<string, unknown>).authorDisplayName as string
+        ?? message.authorUserId ?? 'system'
+
     return (
         <div className="flex gap-2 items-start">
             <div
                 className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0"
                 style={{ background: 'var(--app-subtle-bg)', color: 'var(--app-hint)' }}
             >
-                {(message.authorUserId ?? '?')[0]?.toUpperCase()}
+                {authorName[0]?.toUpperCase() ?? '?'}
             </div>
             <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2">
                     <span className="text-sm font-medium" style={{ color: 'var(--app-fg)' }}>
-                        {message.authorUserId ?? 'system'}
+                        {authorName}
                     </span>
                     <span className="text-xs" style={{ color: 'var(--app-hint)' }}>
                         {formatTime(message.createdAt)}

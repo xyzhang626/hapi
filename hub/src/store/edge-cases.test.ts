@@ -47,7 +47,9 @@ function createStoreSyncAdapter(store: Store) {
             })
         },
         updateThreadStatus: (sessionId: string, ns: string, status: 'active' | 'completed' | 'archived') =>
-            store.sessions.setThreadStatus(sessionId, ns, status)
+            store.sessions.setThreadStatus(sessionId, ns, status),
+        getWorkspaceUser: (ns: string, userId: string) =>
+            store.workspaceUsers.getUser(ns, userId)
     }
 }
 

@@ -148,7 +148,12 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         if (before !== undefined && isNaN(before)) return c.json({ error: 'Invalid before parameter' }, 400)
         if (limit !== undefined && isNaN(limit)) return c.json({ error: 'Invalid limit parameter' }, 400)
         const messages = engine.getChannelMessages(id, { before, limit })
-        return c.json({ messages })
+        const enriched = messages.map((msg) => {
+            if (!msg.authorUserId) return msg
+            const wsUser = engine.getWorkspaceUser(namespace, msg.authorUserId)
+            return { ...msg, authorDisplayName: wsUser?.displayName ?? msg.authorUserId }
+        })
+        return c.json({ messages: enriched })
     })
 
     // POST /channels/:id/messages — send message (membership check)

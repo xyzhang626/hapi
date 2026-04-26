@@ -49,7 +49,7 @@ export class ChannelAgent {
         if (message.kind !== 'text') return
 
         const body = typeof message.body === 'string' ? message.body : JSON.stringify(message.body)
-        if (!body.includes('@agent')) return
+        if (!body.toLowerCase().includes('@agent') && !body.toLowerCase().includes('@claude')) return
 
         const taskTitle = this.extractTaskTitle(body)
         const entry: TaskEntry = {
@@ -109,7 +109,7 @@ export class ChannelAgent {
 
         entry.startedAt = Date.now()
 
-        const taskPrompt = entry.messageBody.replace(/@agent/gi, '').trim()
+        const taskPrompt = entry.messageBody.replace(/@agent|@claude/gi, '').trim()
 
         try {
             const result = await this.engine.spawnSession(
@@ -229,7 +229,7 @@ export class ChannelAgent {
     }
 
     private extractTaskTitle(body: string): string {
-        const cleaned = body.replace(/@agent/gi, '').trim()
+        const cleaned = body.replace(/@agent|@claude/gi, '').trim()
         const firstLine = cleaned.split('\n')[0] ?? ''
         const title = firstLine.slice(0, 100).trim()
         return title || 'Agent task'
