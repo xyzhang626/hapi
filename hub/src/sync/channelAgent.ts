@@ -102,7 +102,17 @@ export class ChannelAgent {
 
         const machines = this.engine.getMachinesByNamespace(entry.namespace)
         const onlineMachine = machines.find((m) => m.online)
-        if (!onlineMachine) return
+        if (!onlineMachine) {
+            this.engine.sendChannelMessage(
+                entry.channelId,
+                entry.namespace,
+                null,
+                'agent_summary',
+                { status: 'failed', taskTitle: entry.taskTitle, reason: 'no_machine_online', startedBy: entry.userId },
+                undefined
+            )
+            return
+        }
 
         const metadata = onlineMachine.metadata as { path?: string } | null
         const directory = metadata?.path ?? '/'
