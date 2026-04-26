@@ -104,7 +104,7 @@ export class ChannelAgent {
         const flavor = (agentConfig?.flavor ?? 'claude') as 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
 
         const machines = this.engine.getMachinesByNamespace(entry.namespace)
-        const onlineMachine = machines.find((m) => m.online)
+        const onlineMachine = machines.find((m) => m.active)
         if (!onlineMachine) {
             this.engine.sendChannelMessage(
                 entry.channelId,
