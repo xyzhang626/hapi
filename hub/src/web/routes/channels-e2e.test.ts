@@ -273,7 +273,7 @@ function jsonRequest(
     } else {
         init.headers = headers
     }
-    return app.request(path, init)
+    return Promise.resolve(app.request(path, init))
 }
 
 // ==========================================================================

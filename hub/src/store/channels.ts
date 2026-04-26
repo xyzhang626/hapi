@@ -129,7 +129,7 @@ export function updateChannel(
     const result = db.prepare(`
         UPDATE channels SET ${setClauses.join(', ')}
         WHERE id = @id AND namespace = @namespace
-    `).run(params)
+    `).run(params as Record<string, string | number | null>)
 
     return result.changes === 1
 }

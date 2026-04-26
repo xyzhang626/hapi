@@ -70,7 +70,7 @@ function createServer() {
             const { payload } = await jwtVerify(token, JWT_SECRET, { algorithms: ['HS256'] })
             c.set('userId', payload.uid as number)
             c.set('namespace', payload.ns as string)
-            await next()
+            return await next()
         } catch {
             return c.json({ error: 'Invalid token' }, 401)
         }
