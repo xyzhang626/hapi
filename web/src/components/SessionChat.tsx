@@ -415,6 +415,31 @@ export function SessionChat(props: {
                         </div>
                     ) : null}
 
+                    {(props.session as Session & { isChannelBot?: boolean }).isChannelBot ? (
+                        <div className="px-3 pb-3">
+                            <div
+                                className="mx-auto w-full max-w-content rounded-lg p-3 text-sm flex items-center gap-2"
+                                style={{
+                                    background: 'linear-gradient(135deg, var(--app-subtle-bg), var(--app-bg))',
+                                    border: '1px solid var(--app-border)',
+                                    color: 'var(--app-fg)'
+                                }}
+                            >
+                                <span>👁️</span>
+                                <span className="font-medium">View only</span>
+                                <span style={{ color: 'var(--app-hint)' }}>—  This is the channel bot's internal transcript. Interact with it from the channel.</span>
+                                {props.session.channelId && (
+                                    <button
+                                        onClick={() => navigate({ to: '/channels/$channelId', params: { channelId: props.session.channelId! } })}
+                                        className="ml-auto text-xs px-2 py-1 rounded"
+                                        style={{ background: 'var(--app-button)', color: 'var(--app-button-text)' }}
+                                    >
+                                        ← Back to channel
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
                     <HappyComposer
                         key={props.session.id}
                         sessionId={props.session.id}
@@ -459,6 +484,7 @@ export function SessionChat(props: {
                         onVoiceToggle={voice ? handleVoiceToggle : undefined}
                         onVoiceMicToggle={voice ? handleVoiceMicToggle : undefined}
                     />
+                    )}
                 </div>
             </AssistantRuntimeProvider>
 

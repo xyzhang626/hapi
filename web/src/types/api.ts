@@ -3,7 +3,10 @@ import type {
     Session,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
-    WorktreeMetadata
+    WorktreeMetadata,
+    Channel,
+    ChannelMember,
+    ChannelMessage
 } from '@hapi/protocol/types'
 
 export type {

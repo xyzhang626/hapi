@@ -525,6 +525,38 @@ export class ApiClient {
         })
     }
 
+    /** Stage 2: toggle a reaction on a channel message (Slack-style toggle). */
+    async toggleMessageReaction(channelId: string, messageId: string, emoji: string): Promise<{ result: 'added' | 'removed' }> {
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/reactions`, {
+            method: 'POST',
+            body: JSON.stringify({ emoji })
+        })
+    }
+
+    /** Stage 2: pin or unpin a thread (channel owner only). */
+    async setThreadPinned(sessionId: string, pinned: boolean): Promise<{ ok: boolean }> {
+        return await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/pinned`, {
+            method: 'PATCH',
+            body: JSON.stringify({ pinned })
+        })
+    }
+
+    /** Stage 2: change thread visibility (creator only). */
+    async setThreadVisibility(sessionId: string, visibility: 'private' | 'shared'): Promise<{ ok: boolean }> {
+        return await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/visibility`, {
+            method: 'PATCH',
+            body: JSON.stringify({ visibility })
+        })
+    }
+
+    /** Stage 2: update channel agentConfig (owner only). */
+    async updateChannelAgentConfig(channelId: string, agentConfig: unknown): Promise<{ channel: unknown }> {
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ agentConfig })
+        })
+    }
+
     async getChannelSessions(channelId: string): Promise<ChannelSessionsResponse> {
         return await this.request(`/api/channels/${encodeURIComponent(channelId)}/sessions`)
     }
