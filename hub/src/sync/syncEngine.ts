@@ -33,6 +33,12 @@ import { SessionCache } from './sessionCache'
 export type { Session, SyncEvent } from '@hapi/protocol/types'
 export type { Machine } from './machineCache'
 export type { SyncEventListener } from './eventPublisher'
+
+/** Stage 2: drop a duplicate "+ New thread" request from the same user
+ *  with the same topic within this window. Hand-tuned: long enough to
+ *  cover a double-click, short enough that intentional re-asks (e.g.
+ *  "no really, do it") still go through. */
+const THREAD_REQUEST_DEDUPE_WINDOW_MS = 5_000
 export type {
     RpcCodexModel,
     RpcCommandResponse,
@@ -60,6 +66,10 @@ export class SyncEngine {
     private agentConfigStore: import('../agentConfig/agentConfigStore').AgentConfigStore | null = null
     private agentConfigUnsub: (() => void) | null = null
     private inactivityTimer: NodeJS.Timeout | null = null
+    /** Stage 2: drop duplicate "+ New thread" requests from the same
+     *  user with the same topic within a short window (avoids double-clicks
+     *  spawning two threads). Keyed by `${channelId}|${userId}|${topic}`. */
+    private readonly threadRequestDedupe: Map<string, number> = new Map()
 
     constructor(
         store: Store,
@@ -935,8 +945,27 @@ export class SyncEngine {
      * The web POSTs to /channels/:id/thread-request with { topic } — the
      * topic seeds the bot's reasoning. We never spawn a thread directly
      * here; the bot is in charge of choosing title/flavor/visibility.
+     *
+     * Returns false when the request is dropped as a duplicate (same
+     * channel+user+topic within 5s) so the route can surface the
+     * dedup to the client. Otherwise returns true.
      */
-    requestNewThread(channelId: string, namespace: string, userId: string, topic: string): void {
+    requestNewThread(channelId: string, namespace: string, userId: string, topic: string): boolean {
+        const key = `${channelId}|${userId}|${topic}`
+        const now = Date.now()
+        const last = this.threadRequestDedupe.get(key)
+        if (last && now - last < THREAD_REQUEST_DEDUPE_WINDOW_MS) {
+            return false
+        }
+        this.threadRequestDedupe.set(key, now)
+        // Opportunistic GC so the map doesn't grow unbounded.
+        if (this.threadRequestDedupe.size > 256) {
+            for (const [k, t] of this.threadRequestDedupe) {
+                if (now - t > THREAD_REQUEST_DEDUPE_WINDOW_MS) {
+                    this.threadRequestDedupe.delete(k)
+                }
+            }
+        }
         this.eventPublisher.emit({
             type: 'channel-thread-requested',
             channelId,
@@ -944,6 +973,7 @@ export class SyncEngine {
             userId,
             topic
         } as SyncEvent)
+        return true
     }
 
     setThreadVisibility(sessionId: string, namespace: string, visibility: 'private' | 'shared'): boolean {

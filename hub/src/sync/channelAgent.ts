@@ -25,6 +25,34 @@ import type { SyncEngine } from './syncEngine'
 const WEAK_SIGNAL_DEBOUNCE_MS = 3_000
 const WEAK_SIGNAL_FLUSH_THRESHOLD = 2
 
+/**
+ * Strong-signal injections wrap user-controlled text inside a
+ * `<system>...</system>` tag whose closing literal is what the bot
+ * scans for. If a user puts a literal `</system>` (or `<system>`) in
+ * their message body, an unsanitized inject would let them spoof a
+ * fake strong-signal envelope visible to the bot. Strip those
+ * substrings everywhere user content lands inside the wrap.
+ *
+ * Newlines are normalized too — they're harmless to the bot but make
+ * the log noisier and risk turning a single-line payload into a
+ * multi-line one that visually bleeds into the next inject.
+ */
+function sanitizeForSystemTag(s: string): string {
+    return s
+        .replace(/<\/?system>/gi, '[tag]')
+        .replace(/\r?\n/g, ' ')
+}
+
+/**
+ * Stage 2: when a thread session goes from active → !active but its
+ * threadStatus is still 'active' (i.e., not explicitly completed or
+ * archived), wait this long before treating it as a "stall" worth
+ * notifying the bot about. If the session bounces back active within
+ * this window, the pending signal is canceled so we don't spam the
+ * bot with churn from short-lived disconnects.
+ */
+const THREAD_STALL_DEBOUNCE_MS = 10_000
+
 type WeakBuffer = {
     pending: Array<{ authorUserId: string | null; text: string; messageId: string; seq: number; createdAt: number }>
     timer: ReturnType<typeof setTimeout> | null
@@ -35,9 +63,18 @@ type ChannelContext = {
     botName: string
 }
 
+type ThreadFiredState = 'completed' | 'archived' | 'stalled'
+
 export class ChannelAgent {
     private readonly weakBuffers: Map<string, WeakBuffer> = new Map()
-    private readonly channelContextCache: Map<string, ChannelContext | null> = new Map()
+    private readonly channelContextCache: Map<string, ChannelContext> = new Map()
+    /** Last strong signal we forwarded for a thread, keyed by sessionId.
+     *  Prevents duplicate `thread-completed` etc. emissions when the
+     *  session-updated event repeats. */
+    private readonly threadLastFiredState: Map<string, ThreadFiredState> = new Map()
+    /** Pending stall timers keyed by sessionId. Cleared when the
+     *  session comes back active or when the timer fires. */
+    private readonly threadStallTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
     private unsubscribe: (() => void) | null = null
 
     constructor(private readonly engine: SyncEngine) {
@@ -54,6 +91,11 @@ export class ChannelAgent {
         }
         this.weakBuffers.clear()
         this.channelContextCache.clear()
+        for (const t of this.threadStallTimers.values()) {
+            clearTimeout(t)
+        }
+        this.threadStallTimers.clear()
+        this.threadLastFiredState.clear()
     }
 
     private handleEvent(event: SyncEvent): void {
@@ -74,21 +116,25 @@ export class ChannelAgent {
         // Flush pending weak buffer first to preserve ordering before this
         // strong signal lands in the bot session.
         this.flushWeakBuffer(event.channelId, namespace, ctx)
-        const safeTopic = event.topic.replace(/\n/g, ' ').slice(0, 500)
+        const safeTopic = sanitizeForSystemTag(event.topic).slice(0, 500)
         const wrapped = `<system>user-requested-new-thread: { userId: "${event.userId}", topic: ${JSON.stringify(safeTopic)} }</system>\n${safeTopic}`
         void this.engine.sendMessage(ctx.botSessionId, { text: wrapped, sentFrom: 'webapp' }).catch((err) => {
             console.error('[ChannelAgent] forward thread-requested failed:', err)
         })
     }
 
-    /** Look up bot session id + name for a channel; cached. */
+    /** Look up bot session id + name for a channel.
+     *  Cached only when a bot exists; misses are re-queried each call so
+     *  a bot that respawns a few seconds after the lookup is picked up
+     *  on the next event without waiting for the bot's own session-updated
+     *  to invalidate the cache. */
     private getChannelContext(channelId: string, namespace: string): ChannelContext | null {
-        if (this.channelContextCache.has(channelId)) {
-            return this.channelContextCache.get(channelId) ?? null
-        }
+        const cached = this.channelContextCache.get(channelId)
+        if (cached !== undefined) return cached
         const channel = this.engine.getChannel(channelId, namespace)
         if (!channel || !channel.botSessionId) {
-            this.channelContextCache.set(channelId, null)
+            // Don't cache misses — let a future call re-query so a
+            // late-spawned bot gets picked up promptly.
             return null
         }
         const cfg = channel.agentConfig as { botName?: string } | null
@@ -164,17 +210,77 @@ export class ChannelAgent {
             return
         }
 
-        // Strong signal: thread session state change (active → inactive = completion or stall)
-        // We flag it whenever active flips. The bot decides what to do.
-        // To avoid spamming, only fire when active=false (completion-ish) for now.
-        if (!session.active) {
-            this.flushWeakBuffer(session.channelId, namespace, ctx)
-            const tag = `thread-completed`
-            const summary = `<system>${tag}: { threadId: "${sessionId}", title: "${session.threadTitle ?? ''}", status: "${session.threadStatus ?? 'completed'}" }</system>`
-            void this.engine.sendMessage(ctx.botSessionId, { text: summary, sentFrom: 'webapp' }).catch((err) => {
-                console.error('[ChannelAgent] forward thread state failed:', err)
-            })
+        // Stage-2 item #6: distinguish thread state changes by threadStatus,
+        // dedupe repeats, and debounce active=false flapping.
+        //
+        // - threadStatus 'completed' / 'archived' → fire the matching strong
+        //   signal immediately (these are explicit terminal transitions).
+        // - active=false but threadStatus still 'active' → debounce 10s. If
+        //   the session comes back active within the window, cancel; otherwise
+        //   fire 'thread-stalled' so the bot can decide whether to nudge.
+        // - active=true → cancel any pending stall timer and clear last-fired
+        //   memo so a future genuine completion can fire again.
+        if (session.threadStatus === 'completed') {
+            this.fireThreadStateSignal(session.channelId, namespace, ctx, 'completed', sessionId, session.threadTitle ?? '', session.threadStatus)
+            return
         }
+        if (session.threadStatus === 'archived') {
+            this.fireThreadStateSignal(session.channelId, namespace, ctx, 'archived', sessionId, session.threadTitle ?? '', session.threadStatus)
+            return
+        }
+
+        if (session.active) {
+            // Came back online — cancel pending stall and forget last-fired
+            // (so a future stall would fire again).
+            const t = this.threadStallTimers.get(sessionId)
+            if (t) {
+                clearTimeout(t)
+                this.threadStallTimers.delete(sessionId)
+            }
+            this.threadLastFiredState.delete(sessionId)
+            return
+        }
+
+        // active=false, threadStatus still 'active' → schedule a stall signal
+        // unless one is already pending or already fired.
+        if (this.threadStallTimers.has(sessionId)) return
+        if (this.threadLastFiredState.get(sessionId) === 'stalled') return
+        const channelId = session.channelId
+        const threadTitle = session.threadTitle ?? ''
+        const timer = setTimeout(() => {
+            this.threadStallTimers.delete(sessionId)
+            const fresh = this.engine.getSession(sessionId)
+            if (!fresh) return
+            // Fire only if still inactive AND still in active threadStatus
+            // (i.e., a terminal status didn't preempt us in the meantime).
+            if (fresh.active) return
+            if (fresh.threadStatus !== 'active' && fresh.threadStatus !== undefined) return
+            const freshCtx = this.getChannelContext(channelId, fresh.namespace)
+            if (!freshCtx) return
+            this.fireThreadStateSignal(channelId, fresh.namespace, freshCtx, 'stalled', sessionId, fresh.threadTitle ?? threadTitle, fresh.threadStatus ?? 'active')
+        }, THREAD_STALL_DEBOUNCE_MS)
+        this.threadStallTimers.set(sessionId, timer)
+    }
+
+    private fireThreadStateSignal(
+        channelId: string,
+        namespace: string,
+        ctx: ChannelContext,
+        kind: ThreadFiredState,
+        sessionId: string,
+        threadTitle: string,
+        threadStatus: string
+    ): void {
+        // Dedup: don't re-fire the same kind for the same session.
+        if (this.threadLastFiredState.get(sessionId) === kind) return
+        this.threadLastFiredState.set(sessionId, kind)
+
+        this.flushWeakBuffer(channelId, namespace, ctx)
+        const tag = `thread-${kind}`
+        const summary = `<system>${tag}: { threadId: "${sessionId}", title: ${JSON.stringify(threadTitle)}, status: "${threadStatus}" }</system>`
+        void this.engine.sendMessage(ctx.botSessionId, { text: summary, sentFrom: 'webapp' }).catch((err) => {
+            console.error('[ChannelAgent] forward thread state failed:', err)
+        })
     }
 
     private isStrongMentionSignal(text: string, botName: string): boolean {
@@ -209,7 +315,8 @@ export class ChannelAgent {
         message: { id: string; authorUserId: string | null; createdAt: number },
         text: string
     ): void {
-        const wrapped = `<system>${tag}: { authorUserId: "${message.authorUserId ?? 'unknown'}", messageId: "${message.id}" }</system>\n${text}`
+        const safeText = sanitizeForSystemTag(text)
+        const wrapped = `<system>${tag}: { authorUserId: "${message.authorUserId ?? 'unknown'}", messageId: "${message.id}" }</system>\n${safeText}`
         void this.engine.sendMessage(ctx.botSessionId, { text: wrapped, sentFrom: 'webapp' }).catch((err) => {
             console.error('[ChannelAgent] forward strong signal failed:', err)
         })
@@ -259,7 +366,7 @@ export class ChannelAgent {
         buf.pending = []
 
         const lines = items.map((it) => {
-            return `[${it.authorUserId ?? 'anon'} | msgId=${it.messageId}] ${it.text}`
+            return `[${it.authorUserId ?? 'anon'} | msgId=${it.messageId}] ${sanitizeForSystemTag(it.text)}`
         }).join('\n')
         const wrapped = `<system>weak-signal-batch: { count: ${items.length} }</system>\n${lines}`
 

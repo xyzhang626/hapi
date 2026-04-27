@@ -291,7 +291,17 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         if (!topic) {
             return c.json({ error: 'topic is required' }, 400)
         }
-        engine.requestNewThread(channelId, namespace, userId, topic)
+        // Stage 2: surface a 409 instead of silently 200'ing when the channel
+        // currently has no bot to forward to (audit finding from item-5 review).
+        if (!channel.botSessionId) {
+            return c.json({
+                error: 'Channel has no bot — set agentConfig in Channel settings first'
+            }, 409)
+        }
+        const accepted = engine.requestNewThread(channelId, namespace, userId, topic)
+        if (!accepted) {
+            return c.json({ ok: true, deduped: true })
+        }
         return c.json({ ok: true })
     })
 
