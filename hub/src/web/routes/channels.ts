@@ -172,8 +172,15 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             const reactions = reactionsByMessage.get(msg.id) ?? []
             const base = { ...msg, reactions }
             if (!msg.authorUserId) return base
-            const wsUser = engine.getWorkspaceUser(channel.namespace, msg.authorUserId)
-            return { ...base, authorDisplayName: wsUser?.displayName ?? msg.authorUserId }
+            // Stage 2: channels are membership-based across namespaces, so the
+            // author may live in a different namespace than the channel owner.
+            // Try the channel's namespace first, then fall back to the global
+            // lookup so cross-ns members render with their real displayName.
+            const localUser = engine.getWorkspaceUser(channel.namespace, msg.authorUserId)
+            const displayName = localUser?.displayName
+                ?? engine.getDisplayNameForUser(msg.authorUserId)
+                ?? msg.authorUserId
+            return { ...base, authorDisplayName: displayName }
         })
         return c.json({ messages: enriched })
     })
@@ -239,7 +246,19 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         const id = c.req.param('id')
         const r = requireChannelMember(c, engine, id)
         if (r instanceof Response) return r
-        return c.json({ sessions: engine.getSessionsByChannel(id, r.channel.namespace) })
+        const sessions = engine.getSessionsByChannel(id, r.channel.namespace)
+        // Stage 2: enrich each session with createdByDisplayName (cross-ns
+        // workspace lookup) so the web ThreadCard can render "by Alice"
+        // instead of falling back to the raw userId for invited members.
+        const enriched = sessions.map((s) => {
+            const sAny = s as typeof s & { createdByUserId?: string; createdByDisplayName?: string }
+            const uid = sAny.createdByUserId
+            if (!uid) return s
+            const displayName = engine.getDisplayNameForUser(uid)
+            if (!displayName) return s
+            return { ...s, createdByDisplayName: displayName }
+        })
+        return c.json({ sessions: enriched })
     })
 
     // POST /channels/:id/sessions/:sessionId/detach — detach a session from a channel

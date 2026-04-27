@@ -55,6 +55,8 @@ function createStoreSyncAdapter(store: Store) {
             store.sessions.setThreadStatus(sessionId, ns, status),
         getWorkspaceUser: (ns: string, userId: string) =>
             store.workspaceUsers.getUser(ns, userId),
+        getDisplayNameForUser: (userId: string) =>
+            store.workspaceUsers.getUserGlobal(userId)?.displayName ?? null,
         getReactionsForMessages: (messageIds: string[]) =>
             store.channelMessageReactions.getForMessages(messageIds),
         toggleMessageReaction: (messageId: string, _channelId: string, _ns: string, reactorRef: string, emoji: string) =>

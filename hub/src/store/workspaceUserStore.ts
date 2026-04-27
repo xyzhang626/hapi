@@ -5,6 +5,7 @@ import {
     ensureDefaults,
     getPersonalChannelId,
     getUser,
+    getUserGlobal,
     isPersonalChannel,
     setPersonalChannel,
     upsertUser
@@ -23,6 +24,11 @@ export class WorkspaceUserStore {
 
     getUser(namespace: string, userId: string): StoredWorkspaceUser | null {
         return getUser(this.db, namespace, userId)
+    }
+
+    /** Cross-namespace lookup. Use to render authors in shared channels. */
+    getUserGlobal(userId: string): StoredWorkspaceUser | null {
+        return getUserGlobal(this.db, userId)
     }
 
     setPersonalChannel(namespace: string, userId: string, channelId: string): void {

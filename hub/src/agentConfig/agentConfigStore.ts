@@ -74,7 +74,7 @@ export class AgentConfigStore {
     startWatching(): void {
         if (this.watcher) return
         try {
-            this.watcher = watch(this.basePath, { recursive: true }, (eventType, filename) => {
+            this.watcher = watch(this.basePath, { recursive: true }, (_eventType, filename) => {
                 if (!filename) return
                 if (typeof filename !== 'string') return
                 if (!filename.endsWith('agent.json')) return

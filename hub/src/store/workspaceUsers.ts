@@ -80,6 +80,21 @@ export function getUser(db: Database, namespace: string, userId: string): Stored
     return row ? toStoredWorkspaceUser(row) : null
 }
 
+/**
+ * Look up a user by userId across all namespaces. The auth layer derives
+ * userId from sha256(`${namespace}:${displayName}`).readUInt32BE(0), so the
+ * id is effectively globally unique. We use this for rendering cross-ns
+ * authors in shared channels — Carol's namespace doesn't have a row for
+ * Dave (ns=dave), so the per-ns lookup falls back to raw id; this gives
+ * us the displayName from whichever namespace owns the user.
+ */
+export function getUserGlobal(db: Database, userId: string): StoredWorkspaceUser | null {
+    const row = db.prepare(
+        'SELECT * FROM workspace_users WHERE user_id = @user_id LIMIT 1'
+    ).get({ user_id: userId }) as DbWorkspaceUserRow | null
+    return row ? toStoredWorkspaceUser(row) : null
+}
+
 export function setPersonalChannel(db: Database, namespace: string, userId: string, channelId: string): void {
     const result = db.prepare(
         'UPDATE workspace_users SET personal_channel_id = @channel_id WHERE namespace = @namespace AND user_id = @user_id'

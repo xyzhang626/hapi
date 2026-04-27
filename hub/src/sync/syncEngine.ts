@@ -899,10 +899,13 @@ export class SyncEngine {
         // Attach the new session to the channel
         this.attachSessionToChannel(spawnedId, channelId, namespace, opts.title, createdByUserId)
 
-        // For scheduled threads, set the scheduled/pinned/visibility on the session row
+        // For scheduled threads, set the scheduled/pinned/visibility on the session row.
+        // Use the engine-level helpers so the corresponding `thread-pinned` /
+        // `thread-visibility-changed` SSE events fire — otherwise the web pinned-chip
+        // strip and the shared-card upgrade only show up after a manual page reload.
         if (opts.scheduled) {
-            this.store.sessions.setSessionPinned(spawnedId, namespace, true)
-            this.store.sessions.setThreadVisibility(spawnedId, namespace, 'shared')
+            this.setSessionPinned(spawnedId, namespace, true)
+            this.setThreadVisibility(spawnedId, namespace, 'shared')
         }
 
         // Emit a thread_card so the channel timeline shows the new thread
@@ -1383,5 +1386,19 @@ export class SyncEngine {
 
     getWorkspaceUser(namespace: string, userId: string) {
         return this.store.workspaceUsers.getUser(namespace, userId)
+    }
+
+    /**
+     * Resolve a user's display name across all namespaces. Stage 2 channels
+     * are membership-based; an invited user's namespace differs from the
+     * channel owner's, so a per-namespace lookup misses them. The userId is
+     * derived from sha256(`${ns}:${displayName}`) so it's globally unique
+     * — we just need to find the row that owns it.
+     */
+    getDisplayNameForUser(userId: string): string | null {
+        // Try the global lookup; fall back to null so callers can choose
+        // their own placeholder.
+        const u = this.store.workspaceUsers.getUserGlobal(userId)
+        return u?.displayName ?? null
     }
 }
