@@ -75,10 +75,29 @@ export class ChannelAgent {
     /** Pending stall timers keyed by sessionId. Cleared when the
      *  session comes back active or when the timer fires. */
     private readonly threadStallTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+    /**
+     * Stage 2: per-channel "who triggered the most recent strong signal".
+     * The bot's `spawn_thread` MCP tool doesn't carry the requesting user's
+     * id (the bot doesn't know it), so we shadow-track it here. `botSpawnThread`
+     * reads this when stamping `createdByUserId` on the new thread row, so
+     * "Share to channel" / "by Alice" attribute the right person rather than
+     * the bot session id.
+     */
+    private readonly lastTriggeringUserId: Map<string, { userId: string; at: number }> = new Map()
     private unsubscribe: (() => void) | null = null
 
     constructor(private readonly engine: SyncEngine) {
         this.unsubscribe = engine.subscribe((event) => this.handleEvent(event))
+    }
+
+    /** Last user who fired a strong signal in this channel, if it was within
+     *  the freshness window (default 5 minutes). Used by botSpawnThread to
+     *  attribute new threads to the requester instead of the bot session. */
+    public lookupRecentTriggeringUser(channelId: string, withinMs = 5 * 60 * 1000): string | null {
+        const entry = this.lastTriggeringUserId.get(channelId)
+        if (!entry) return null
+        if (Date.now() - entry.at > withinMs) return null
+        return entry.userId
     }
 
     stop(): void {
@@ -116,6 +135,11 @@ export class ChannelAgent {
         // Flush pending weak buffer first to preserve ordering before this
         // strong signal lands in the bot session.
         this.flushWeakBuffer(event.channelId, namespace, ctx)
+        // Stage 2: same trigger-attribution path as forwardStrongSignal —
+        // remember who asked so the spawned thread is credited to the user.
+        if (event.userId) {
+            this.lastTriggeringUserId.set(event.channelId, { userId: event.userId, at: Date.now() })
+        }
         const safeTopic = sanitizeForSystemTag(event.topic).slice(0, 500)
         const wrapped = `<system>user-requested-new-thread: { userId: "${event.userId}", topic: ${JSON.stringify(safeTopic)} }</system>\n${safeTopic}`
         void this.engine.sendMessage(ctx.botSessionId, { text: wrapped, sentFrom: 'webapp' }).catch((err) => {
@@ -318,6 +342,12 @@ export class ChannelAgent {
     ): void {
         const safeText = sanitizeForSystemTag(text)
         const wrapped = `<system>${tag}: { authorUserId: "${message.authorUserId ?? 'unknown'}", messageId: "${message.id}" }</system>\n${safeText}`
+        // Stage 2: stash who triggered this strong signal so botSpawnThread
+        // can credit them as the thread's createdByUserId — the bot doesn't
+        // pass userId via MCP and we'd otherwise stamp the bot session id.
+        if (message.authorUserId) {
+            this.lastTriggeringUserId.set(channelId, { userId: message.authorUserId, at: Date.now() })
+        }
         void this.engine.sendMessage(ctx.botSessionId, { text: wrapped, sentFrom: 'webapp' }).catch((err) => {
             console.error('[ChannelAgent] forward strong signal failed:', err)
         })

@@ -197,6 +197,10 @@ async function main() {
 
     syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager)
     channelAgent = new ChannelAgent(syncEngine)
+    // Stage 2: let SyncEngine.botSpawnThread credit the user who triggered
+    // the most recent strong signal in the channel (instead of the bot
+    // session id) when stamping createdByUserId on a new thread.
+    syncEngine.setChannelTriggerLookup((channelId) => channelAgent?.lookupRecentTriggeringUser(channelId) ?? null)
 
     // Stage 2: AgentConfig file storage + hot-reload
     agentConfigStore = new AgentConfigStore()
