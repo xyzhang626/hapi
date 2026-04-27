@@ -133,6 +133,47 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         return c.json({ ok: true })
     })
 
+    // Stage 2: pin / unpin a thread (channel owner only via UI)
+    app.patch('/sessions/:id/pinned', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+        const body = await c.req.json<{ pinned?: boolean }>()
+        if (typeof body.pinned !== 'boolean') return c.json({ error: 'pinned: boolean required' }, 400)
+        const namespace = c.get('namespace')
+        const userId = String(c.get('userId'))
+        // Only allow channel owner (creator) to pin/unpin
+        if (sessionResult.session.channelId) {
+            const channel = engine.getChannel(sessionResult.session.channelId, namespace)
+            if (channel && channel.createdBy !== userId) {
+                return c.json({ error: 'Only channel owner can pin/unpin threads' }, 403)
+            }
+        }
+        const ok = engine.setSessionPinned(sessionResult.session.id, namespace, body.pinned)
+        return c.json({ ok })
+    })
+
+    // Stage 2: change thread visibility (creator only)
+    app.patch('/sessions/:id/visibility', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+        const body = await c.req.json<{ visibility?: string }>()
+        if (body.visibility !== 'private' && body.visibility !== 'shared') {
+            return c.json({ error: 'visibility must be "private" or "shared"' }, 400)
+        }
+        const namespace = c.get('namespace')
+        const userId = String(c.get('userId'))
+        // Only the thread creator can change visibility
+        if (sessionResult.session.createdByUserId && sessionResult.session.createdByUserId !== userId) {
+            return c.json({ error: 'Only thread creator can change visibility' }, 403)
+        }
+        const ok = engine.setThreadVisibility(sessionResult.session.id, namespace, body.visibility)
+        return c.json({ ok })
+    })
+
     app.post('/sessions/:id/resume', async (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) {
