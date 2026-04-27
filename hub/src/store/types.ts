@@ -1,3 +1,5 @@
+export type ThreadVisibility = 'private' | 'shared'
+
 export type StoredSession = {
     id: string
     tag: string | null
@@ -23,6 +25,11 @@ export type StoredSession = {
     threadTitle: string | null
     threadStatus: string | null
     createdByUserId: string | null
+    isChannelBot: boolean
+    scheduled: boolean
+    schedule: string | null
+    pinned: boolean
+    visibility: ThreadVisibility
 }
 
 export type StoredMachine = {
@@ -75,6 +82,7 @@ export type StoredChannel = {
     createdAt: number
     updatedAt: number
     nextSeq: number
+    botSessionId: string | null
 }
 
 export type StoredChannelMember = {
@@ -105,6 +113,13 @@ export type StoredWorkspaceUser = {
     personalChannelId: string | null
     createdAt: number
     lastActiveAt: number
+}
+
+export type StoredChannelMessageReaction = {
+    messageId: string
+    reactorRef: string
+    emoji: string
+    createdAt: number
 }
 
 export type VersionedUpdateResult<T> =

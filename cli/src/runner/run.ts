@@ -377,6 +377,37 @@ export async function startRunner(): Promise<void> {
           };
         }
 
+        // Stage 2: thread channel-bot context to the spawned CLI via env vars.
+        if (options.isChannelBot) {
+          extraEnv = {
+            ...extraEnv,
+            HAPI_IS_CHANNEL_BOT: '1',
+            HAPI_CHANNEL_ID: options.channelId ?? '',
+            HAPI_BOT_NAME: options.botName ?? 'Agent',
+            HAPI_AGENT_CONFIG_JSON: options.agentConfigJson ?? ''
+          };
+        }
+        if (options.scheduled) {
+          extraEnv = {
+            ...extraEnv,
+            HAPI_SCHEDULED_THREAD: '1',
+            HAPI_THREAD_SCHEDULE: options.schedule ?? ''
+          };
+        }
+        if (options.customSystemPrompt) {
+          extraEnv = {
+            ...extraEnv,
+            HAPI_CUSTOM_SYSTEM_PROMPT: options.customSystemPrompt
+          };
+        }
+        if (options.channelId && !options.isChannelBot) {
+          // Thread session (non-bot) attached to a channel
+          extraEnv = {
+            ...extraEnv,
+            HAPI_CHANNEL_ID: options.channelId
+          };
+        }
+
         const args = buildCliArgs(agent, options, yolo);
 
         // sessionId reserved for future use

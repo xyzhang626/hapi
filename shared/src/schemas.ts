@@ -46,7 +46,14 @@ export const MetadataSchema = z.object({
     archivedBy: z.string().optional(),
     archiveReason: z.string().optional(),
     flavor: z.string().nullish(),
-    worktree: WorktreeMetadataSchema.optional()
+    worktree: WorktreeMetadataSchema.optional(),
+    // Stage 2: channel-bot context
+    isChannelBot: z.boolean().optional(),
+    channelId: z.string().optional(),
+    botName: z.string().optional(),
+    // Stage 2: scheduled-thread context
+    scheduledThread: z.boolean().optional(),
+    threadSchedule: z.string().optional()
 })
 
 export type Metadata = z.infer<typeof MetadataSchema>

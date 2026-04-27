@@ -3,6 +3,7 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { ChannelMessageStore } from './channelMessageStore'
+import { ChannelMessageReactionStore } from './channelMessageReactionStore'
 import { ChannelStore } from './channelStore'
 import { ChannelInviteStore } from './channelInviteStore'
 import { MachineStore } from './machineStore'
@@ -16,15 +17,18 @@ export type {
     StoredChannel,
     StoredChannelMember,
     StoredChannelMessage,
+    StoredChannelMessageReaction,
     StoredMachine,
     StoredMessage,
     StoredPushSubscription,
     StoredSession,
     StoredUser,
     StoredWorkspaceUser,
+    ThreadVisibility,
     VersionedUpdateResult
 } from './types'
 export { ChannelMessageStore } from './channelMessageStore'
+export { ChannelMessageReactionStore } from './channelMessageReactionStore'
 export { ChannelStore } from './channelStore'
 export { ChannelInviteStore } from './channelInviteStore'
 export { MachineStore } from './machineStore'
@@ -34,7 +38,7 @@ export { SessionStore } from './sessionStore'
 export { UserStore } from './userStore'
 export { WorkspaceUserStore } from './workspaceUserStore'
 
-const SCHEMA_VERSION: number = 9
+const SCHEMA_VERSION: number = 10
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -44,6 +48,7 @@ const REQUIRED_TABLES = [
     'channels',
     'channel_members',
     'channel_messages',
+    'channel_message_reactions',
     'workspace_users',
     'channel_invites'
 ] as const
@@ -59,6 +64,7 @@ export class Store {
     readonly push: PushStore
     readonly channels: ChannelStore
     readonly channelMessages: ChannelMessageStore
+    readonly channelMessageReactions: ChannelMessageReactionStore
     readonly channelInvites: ChannelInviteStore
     readonly workspaceUsers: WorkspaceUserStore
 
@@ -104,6 +110,7 @@ export class Store {
         this.push = new PushStore(this.db)
         this.channels = new ChannelStore(this.db)
         this.channelMessages = new ChannelMessageStore(this.db)
+        this.channelMessageReactions = new ChannelMessageReactionStore(this.db)
         this.channelInvites = new ChannelInviteStore(this.db)
         this.workspaceUsers = new WorkspaceUserStore(this.db)
     }
@@ -168,6 +175,36 @@ export class Store {
 
         if (currentVersion === 8 && SCHEMA_VERSION === 9) {
             this.migrateFromV8ToV9()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 9 && SCHEMA_VERSION === 10) {
+            this.migrateFromV9ToV10()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 8 && SCHEMA_VERSION === 10) {
+            this.migrateFromV8ToV9()
+            this.migrateFromV9ToV10()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 7 && SCHEMA_VERSION === 10) {
+            this.migrateFromV7ToV8()
+            this.migrateFromV8ToV9()
+            this.migrateFromV9ToV10()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 6 && SCHEMA_VERSION === 10) {
+            this.migrateFromV6ToV7()
+            this.migrateFromV7ToV8()
+            this.migrateFromV8ToV9()
+            this.migrateFromV9ToV10()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -254,11 +291,17 @@ export class Store {
                 channel_id TEXT REFERENCES channels(id) ON DELETE RESTRICT,
                 thread_title TEXT,
                 thread_status TEXT DEFAULT 'active',
-                created_by_user_id TEXT
+                created_by_user_id TEXT,
+                is_channel_bot INTEGER NOT NULL DEFAULT 0,
+                scheduled INTEGER NOT NULL DEFAULT 0,
+                schedule TEXT,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                visibility TEXT NOT NULL DEFAULT 'private'
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag);
             CREATE INDEX IF NOT EXISTS idx_sessions_tag_namespace ON sessions(tag, namespace);
             CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(namespace, channel_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_channel_bot ON sessions(channel_id, is_channel_bot) WHERE is_channel_bot = 1;
 
             CREATE TABLE IF NOT EXISTS machines (
                 id TEXT PRIMARY KEY,
@@ -318,7 +361,8 @@ export class Store {
                 created_by TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
-                next_seq INTEGER NOT NULL DEFAULT 1
+                next_seq INTEGER NOT NULL DEFAULT 1,
+                bot_session_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_channels_namespace ON channels(namespace);
 
@@ -356,6 +400,15 @@ export class Store {
                 UNIQUE(channel_id, seq)
             );
             CREATE INDEX IF NOT EXISTS idx_channel_messages_channel ON channel_messages(channel_id, seq);
+
+            CREATE TABLE IF NOT EXISTS channel_message_reactions (
+                message_id TEXT NOT NULL REFERENCES channel_messages(id) ON DELETE CASCADE,
+                reactor_ref TEXT NOT NULL,
+                emoji TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (message_id, reactor_ref, emoji)
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_reactions_message ON channel_message_reactions(message_id);
 
             CREATE TABLE IF NOT EXISTS channel_invites (
                 id TEXT PRIMARY KEY,
@@ -591,6 +644,44 @@ export class Store {
         }
     }
 
+    private migrateFromV9ToV10(): void {
+        const sessionColumns = this.getSessionColumnNames()
+        if (!sessionColumns.has('is_channel_bot')) {
+            this.db.exec("ALTER TABLE sessions ADD COLUMN is_channel_bot INTEGER NOT NULL DEFAULT 0")
+        }
+        if (!sessionColumns.has('scheduled')) {
+            this.db.exec("ALTER TABLE sessions ADD COLUMN scheduled INTEGER NOT NULL DEFAULT 0")
+        }
+        if (!sessionColumns.has('schedule')) {
+            this.db.exec('ALTER TABLE sessions ADD COLUMN schedule TEXT')
+        }
+        if (!sessionColumns.has('pinned')) {
+            this.db.exec("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        }
+        if (!sessionColumns.has('visibility')) {
+            this.db.exec("ALTER TABLE sessions ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'")
+        }
+        this.db.exec(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_channel_bot ON sessions(channel_id, is_channel_bot) WHERE is_channel_bot = 1"
+        )
+
+        const channelColumns = this.getChannelColumnNames()
+        if (!channelColumns.has('bot_session_id')) {
+            this.db.exec('ALTER TABLE channels ADD COLUMN bot_session_id TEXT')
+        }
+
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS channel_message_reactions (
+                message_id TEXT NOT NULL REFERENCES channel_messages(id) ON DELETE CASCADE,
+                reactor_ref TEXT NOT NULL,
+                emoji TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (message_id, reactor_ref, emoji)
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_reactions_message ON channel_message_reactions(message_id);
+        `)
+    }
+
     private getSessionColumnNames(): Set<string> {
         const rows = this.db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>
         return new Set(rows.map((row) => row.name))
@@ -598,6 +689,11 @@ export class Store {
 
     private getMachineColumnNames(): Set<string> {
         const rows = this.db.prepare('PRAGMA table_info(machines)').all() as Array<{ name: string }>
+        return new Set(rows.map((row) => row.name))
+    }
+
+    private getChannelColumnNames(): Set<string> {
+        const rows = this.db.prepare('PRAGMA table_info(channels)').all() as Array<{ name: string }>
         return new Set(rows.map((row) => row.name))
     }
 

@@ -12,6 +12,7 @@ type DbChannelRow = {
     created_at: number
     updated_at: number
     next_seq: number
+    bot_session_id: string | null
 }
 
 type DbChannelMemberRow = {
@@ -31,7 +32,8 @@ function toStoredChannel(row: DbChannelRow): StoredChannel {
         createdBy: row.created_by,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
-        nextSeq: row.next_seq
+        nextSeq: row.next_seq,
+        botSessionId: row.bot_session_id
     }
 }
 
@@ -193,4 +195,23 @@ export function getChannelByName(db: Database, namespace: string, name: string):
         'SELECT * FROM channels WHERE namespace = @namespace AND name = @name LIMIT 1'
     ).get({ namespace, name }) as DbChannelRow | null
     return row ? toStoredChannel(row) : null
+}
+
+export function setChannelBotSessionId(
+    db: Database,
+    channelId: string,
+    namespace: string,
+    botSessionId: string | null
+): boolean {
+    const now = Date.now()
+    const result = db.prepare(
+        `UPDATE channels SET bot_session_id = @bot_session_id, updated_at = @updated_at
+         WHERE id = @id AND namespace = @namespace`
+    ).run({
+        bot_session_id: botSessionId,
+        updated_at: now,
+        id: channelId,
+        namespace
+    })
+    return result.changes === 1
 }

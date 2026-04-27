@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite'
 import { randomUUID } from 'node:crypto'
 
-import type { StoredSession, VersionedUpdateResult } from './types'
+import type { StoredSession, ThreadVisibility, VersionedUpdateResult } from './types'
 import { safeJsonParse } from './json'
 import { updateVersionedField } from './versionedUpdates'
 
@@ -30,6 +30,11 @@ type DbSessionRow = {
     thread_title: string | null
     thread_status: string | null
     created_by_user_id: string | null
+    is_channel_bot: number
+    scheduled: number
+    schedule: string | null
+    pinned: number
+    visibility: string
 }
 
 function toStoredSession(row: DbSessionRow): StoredSession {
@@ -57,7 +62,12 @@ function toStoredSession(row: DbSessionRow): StoredSession {
         channelId: row.channel_id,
         threadTitle: row.thread_title,
         threadStatus: row.thread_status,
-        createdByUserId: row.created_by_user_id
+        createdByUserId: row.created_by_user_id,
+        isChannelBot: row.is_channel_bot === 1,
+        scheduled: row.scheduled === 1,
+        schedule: row.schedule,
+        pinned: row.pinned === 1,
+        visibility: (row.visibility === 'shared' ? 'shared' : 'private') as ThreadVisibility
     }
 }
 
@@ -70,7 +80,16 @@ export function getOrCreateSession(
     model?: string,
     effort?: string,
     modelReasoningEffort?: string,
-    channelOpts?: { channelId?: string; threadTitle?: string; createdByUserId?: string }
+    channelOpts?: {
+        channelId?: string
+        threadTitle?: string
+        createdByUserId?: string
+        isChannelBot?: boolean
+        scheduled?: boolean
+        schedule?: string
+        pinned?: boolean
+        visibility?: ThreadVisibility
+    }
 ): StoredSession {
     const existing = db.prepare(
         'SELECT * FROM sessions WHERE tag = ? AND namespace = ? ORDER BY created_at DESC LIMIT 1'
@@ -96,7 +115,8 @@ export function getOrCreateSession(
             effort,
             todos, todos_updated_at,
             active, active_at, seq,
-            channel_id, thread_title, thread_status, created_by_user_id
+            channel_id, thread_title, thread_status, created_by_user_id,
+            is_channel_bot, scheduled, schedule, pinned, visibility
         ) VALUES (
             @id, @tag, @namespace, NULL, @created_at, @updated_at,
             @metadata, 1,
@@ -106,7 +126,8 @@ export function getOrCreateSession(
             @effort,
             NULL, NULL,
             0, NULL, 0,
-            @channel_id, @thread_title, @thread_status, @created_by_user_id
+            @channel_id, @thread_title, @thread_status, @created_by_user_id,
+            @is_channel_bot, @scheduled, @schedule, @pinned, @visibility
         )
     `).run({
         id,
@@ -122,7 +143,12 @@ export function getOrCreateSession(
         channel_id: channelOpts?.channelId ?? null,
         thread_title: channelOpts?.threadTitle ?? null,
         thread_status: channelOpts?.channelId ? 'active' : null,
-        created_by_user_id: channelOpts?.createdByUserId ?? null
+        created_by_user_id: channelOpts?.createdByUserId ?? null,
+        is_channel_bot: channelOpts?.isChannelBot ? 1 : 0,
+        scheduled: channelOpts?.scheduled ? 1 : 0,
+        schedule: channelOpts?.schedule ?? null,
+        pinned: channelOpts?.pinned ? 1 : 0,
+        visibility: channelOpts?.visibility ?? 'private'
     })
 
     const row = getSession(db, id)
@@ -487,4 +513,62 @@ export function attachToChannel(
         namespace
     })
     return result.changes === 1
+}
+
+export function setSessionPinned(
+    db: Database,
+    sessionId: string,
+    namespace: string,
+    pinned: boolean
+): boolean {
+    const now = Date.now()
+    const result = db.prepare(
+        `UPDATE sessions SET pinned = @pinned, updated_at = @updated_at, seq = seq + 1
+         WHERE id = @id AND namespace = @namespace`
+    ).run({
+        pinned: pinned ? 1 : 0,
+        updated_at: now,
+        id: sessionId,
+        namespace
+    })
+    return result.changes === 1
+}
+
+export function setThreadVisibility(
+    db: Database,
+    sessionId: string,
+    namespace: string,
+    visibility: ThreadVisibility
+): boolean {
+    const now = Date.now()
+    const result = db.prepare(
+        `UPDATE sessions SET visibility = @visibility, updated_at = @updated_at, seq = seq + 1
+         WHERE id = @id AND namespace = @namespace`
+    ).run({
+        visibility,
+        updated_at: now,
+        id: sessionId,
+        namespace
+    })
+    return result.changes === 1
+}
+
+export function getChannelBotSessionId(
+    db: Database,
+    channelId: string,
+    namespace: string
+): string | null {
+    const row = db.prepare(
+        `SELECT id FROM sessions
+         WHERE channel_id = @channel_id AND namespace = @namespace AND is_channel_bot = 1
+         ORDER BY created_at DESC LIMIT 1`
+    ).get({ channel_id: channelId, namespace }) as { id: string } | undefined
+    return row?.id ?? null
+}
+
+export function getAllChannelBotSessions(db: Database): StoredSession[] {
+    const rows = db.prepare(
+        'SELECT * FROM sessions WHERE is_channel_bot = 1 ORDER BY created_at ASC'
+    ).all() as DbSessionRow[]
+    return rows.map(toStoredSession)
 }

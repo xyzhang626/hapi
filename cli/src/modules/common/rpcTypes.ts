@@ -13,6 +13,16 @@ export interface SpawnSessionOptions {
     token?: string
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
+    /** Channel-bot context for the spawned session (Stage 2) */
+    isChannelBot?: boolean
+    channelId?: string
+    botName?: string
+    agentConfigJson?: string
+    /** Scheduled-thread context (Stage 2) */
+    scheduled?: boolean
+    schedule?: string
+    /** Custom system prompt to inject (Stage 2 — used by channel bot + scheduled threads) */
+    customSystemPrompt?: string
 }
 
 export type SpawnSessionResult =

@@ -230,6 +230,20 @@ export class SyncEngine {
         // Retry dedup now that this session is inactive — a prior dedup may have
         // skipped it because it was still active at the time.
         this.triggerDedupIfNeeded(payload.sid)
+        // Channel-bot watchdog: if this session is a channel bot, schedule a restart
+        // with the previous sessionId so context is preserved.
+        const session = this.store.sessions.getSession(payload.sid)
+        if (session?.isChannelBot && session.channelId) {
+            const channelId = session.channelId
+            const namespace = session.namespace
+            const oldSessionId = payload.sid
+            console.log(`[SyncEngine] Channel bot ${oldSessionId} ended — scheduling restart for channel ${channelId}`)
+            setTimeout(() => {
+                this.spawnChannelBot(channelId, namespace, { resumeSessionId: oldSessionId }).catch((err) => {
+                    console.error('[SyncEngine] Channel bot restart failed:', err)
+                })
+            }, 5000)
+        }
     }
 
     handleBackgroundTaskDelta(sessionId: string, delta: { started: number; completed: number }): void {
@@ -382,7 +396,16 @@ export class SyncEngine {
         worktreeName?: string,
         resumeSessionId?: string,
         effort?: string,
-        permissionMode?: PermissionMode
+        permissionMode?: PermissionMode,
+        extras?: {
+            isChannelBot?: boolean
+            channelId?: string
+            botName?: string
+            agentConfigJson?: string
+            scheduled?: boolean
+            schedule?: string
+            customSystemPrompt?: string
+        }
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         return await this.rpcGateway.spawnSession(
             machineId,
@@ -395,7 +418,8 @@ export class SyncEngine {
             worktreeName,
             resumeSessionId,
             effort,
-            permissionMode
+            permissionMode,
+            extras
         )
     }
 
@@ -617,7 +641,87 @@ export class SyncEngine {
     ): StoredChannel {
         const channel = this.store.channels.createChannel(namespace, name, createdBy, description, agentConfig)
         this.channelCache.addChannel(channel)
+        // Stage 2: auto-spawn channel bot if agentConfig is present.
+        // Spawn is async; we don't block channel creation on it.
+        if (agentConfig) {
+            void this.spawnChannelBot(channel.id, namespace).catch((err) => {
+                console.error(`[SyncEngine] auto-spawn bot failed for channel ${channel.id}:`, err)
+            })
+        }
         return channel
+    }
+
+    /**
+     * Spawn (or respawn) a channel bot session for the given channel.
+     * If `options.resumeSessionId` is provided, the bot resumes from that previous session.
+     * Sets channels.bot_session_id on success.
+     */
+    async spawnChannelBot(
+        channelId: string,
+        namespace: string,
+        options?: { resumeSessionId?: string }
+    ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
+        const channel = this.store.channels.getChannel(channelId, namespace)
+        if (!channel) {
+            return { type: 'error', message: `Channel ${channelId} not found` }
+        }
+        if (!channel.agentConfig) {
+            return { type: 'error', message: `Channel ${channelId} has no agentConfig` }
+        }
+
+        // Pick any online machine. Prefer namespace match; fall back to any online.
+        const namespaceMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
+        let machine = namespaceMachines[0]
+        if (!machine) {
+            const anyOnline = this.machineCache.getOnlineMachines()
+            machine = anyOnline[0]
+        }
+        if (!machine) {
+            return { type: 'error', message: 'No machine online for channel bot spawn' }
+        }
+
+        const cfg = (channel.agentConfig ?? {}) as {
+            flavor?: 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
+            model?: string
+            botName?: string
+        }
+        const flavor = cfg.flavor ?? 'claude'
+        const model = cfg.model
+        const botName = cfg.botName ?? 'Agent'
+
+        const safeName = channel.name.replace(/[^a-zA-Z0-9_-]/g, '_')
+        const homeDir = process.env.HAPI_HOME ?? `${process.env.HOME ?? '/tmp'}/.hapi`
+        const directory = `${homeDir}/workspaces/${namespace}/${safeName}`
+
+        const result = await this.spawnSession(
+            machine.id,
+            directory,
+            flavor,
+            model,
+            undefined,
+            true, // yolo
+            undefined,
+            undefined,
+            options?.resumeSessionId,
+            undefined,
+            undefined,
+            {
+                isChannelBot: true,
+                channelId: channel.id,
+                botName,
+                agentConfigJson: JSON.stringify(channel.agentConfig)
+            }
+        )
+
+        if (result.type === 'success') {
+            this.store.channels.setBotSessionId(channelId, namespace, result.sessionId)
+            this.channelCache.updateChannel(channelId, namespace)
+            console.log(`[SyncEngine] Channel bot spawned: channel=${channelId} session=${result.sessionId}`)
+        } else {
+            console.error(`[SyncEngine] Channel bot spawn failed for ${channelId}: ${result.message}`)
+        }
+
+        return result
     }
 
     updateChannelData(

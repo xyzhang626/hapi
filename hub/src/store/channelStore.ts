@@ -13,6 +13,7 @@ import {
     getMembers,
     isMember,
     removeMember,
+    setChannelBotSessionId,
     updateChannel
 } from './channels'
 
@@ -79,5 +80,9 @@ export class ChannelStore {
 
     isMember(channelId: string, userId: string): boolean {
         return isMember(this.db, channelId, userId)
+    }
+
+    setBotSessionId(channelId: string, namespace: string, botSessionId: string | null): boolean {
+        return setChannelBotSessionId(this.db, channelId, namespace, botSessionId)
     }
 }

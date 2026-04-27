@@ -23,6 +23,7 @@ import { PushService } from './push/pushService'
 import { PushNotificationChannel } from './push/pushNotificationChannel'
 import { VisibilityTracker } from './visibility/visibilityTracker'
 import { ChannelAgent } from './sync/channelAgent'
+import { EmbeddedRunner } from './web/embeddedRunner'
 import { TunnelManager } from './tunnel'
 import { waitForTunnelTlsReady } from './tunnel/tlsGate'
 import QRCode from 'qrcode'
@@ -100,6 +101,7 @@ function mergeCorsOrigins(base: string[], extra: string[]): string[] {
 
 let syncEngine: SyncEngine | null = null
 let channelAgent: ChannelAgent | null = null
+let embeddedRunner: EmbeddedRunner | null = null
 let happyBot: HappyBot | null = null
 let webServer: BunServer<WebSocketData> | null = null
 let sseManager: SSEManager | null = null
@@ -236,6 +238,24 @@ async function main() {
     console.log('[Web] Hub listening on :' + config.listenPort)
     console.log('[Web] Local:  http://localhost:' + config.listenPort)
 
+    // Start embedded runner subprocess so a runner is always available for channel bots.
+    // Only spawn if HAPI_DISABLE_EMBEDDED_RUNNER is not set (e.g. in tests).
+    if (!process.env.HAPI_DISABLE_EMBEDDED_RUNNER) {
+        try {
+            embeddedRunner = new EmbeddedRunner({
+                apiUrl: `http://127.0.0.1:${config.listenPort}`,
+                cliApiToken: config.cliApiToken
+            })
+            await embeddedRunner.start()
+        } catch (err) {
+            console.error('[Hub] Failed to start embedded runner:', err)
+            embeddedRunner = null
+            throw err
+        }
+    } else {
+        console.log('[Hub] Embedded runner disabled via HAPI_DISABLE_EMBEDDED_RUNNER')
+    }
+
     // Initialize tunnel AFTER web service is ready
     let tunnelUrl: string | null = null
     if (relayFlag.enabled) {
@@ -305,6 +325,7 @@ async function main() {
         await tunnelManager?.stop()
         await happyBot?.stop()
         notificationHub?.stop()
+        await embeddedRunner?.stop()
         channelAgent?.stop()
         syncEngine?.stop()
         sseManager?.stop()

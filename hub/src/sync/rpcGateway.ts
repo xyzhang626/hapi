@@ -131,14 +131,41 @@ export class RpcGateway {
         worktreeName?: string,
         resumeSessionId?: string,
         effort?: string,
-        permissionMode?: PermissionMode
+        permissionMode?: PermissionMode,
+        extras?: {
+            isChannelBot?: boolean
+            channelId?: string
+            botName?: string
+            agentConfigJson?: string
+            scheduled?: boolean
+            schedule?: string
+            customSystemPrompt?: string
+        }
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         try {
-            const result = await this.machineRpc(
-                machineId,
-                'spawn-happy-session',
-                { type: 'spawn-in-directory', directory, agent, model, modelReasoningEffort, yolo, sessionType, worktreeName, resumeSessionId, effort, permissionMode }
-            )
+            const payload: Record<string, unknown> = {
+                type: 'spawn-in-directory',
+                directory,
+                agent,
+                model,
+                modelReasoningEffort,
+                yolo,
+                sessionType,
+                worktreeName,
+                resumeSessionId,
+                effort,
+                permissionMode
+            }
+            if (extras) {
+                if (extras.isChannelBot !== undefined) payload.isChannelBot = extras.isChannelBot
+                if (extras.channelId !== undefined) payload.channelId = extras.channelId
+                if (extras.botName !== undefined) payload.botName = extras.botName
+                if (extras.agentConfigJson !== undefined) payload.agentConfigJson = extras.agentConfigJson
+                if (extras.scheduled !== undefined) payload.scheduled = extras.scheduled
+                if (extras.schedule !== undefined) payload.schedule = extras.schedule
+                if (extras.customSystemPrompt !== undefined) payload.customSystemPrompt = extras.customSystemPrompt
+            }
+            const result = await this.machineRpc(machineId, 'spawn-happy-session', payload)
             if (result && typeof result === 'object') {
                 const obj = result as Record<string, unknown>
                 if (obj.type === 'success' && typeof obj.sessionId === 'string') {

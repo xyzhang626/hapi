@@ -1,11 +1,13 @@
 import type { Database } from 'bun:sqlite'
 
-import type { StoredSession, VersionedUpdateResult } from './types'
+import type { StoredSession, ThreadVisibility, VersionedUpdateResult } from './types'
 import {
     attachToChannel,
     deleteSession,
     detachSession,
     detachSessionsFromChannel,
+    getAllChannelBotSessions,
+    getChannelBotSessionId,
     getOrCreateSession,
     getSession,
     getSessionByNamespace,
@@ -16,9 +18,11 @@ import {
     setSessionEffort,
     setSessionModel,
     setSessionModelReasoningEffort,
+    setSessionPinned,
     setSessionTeamState,
     setSessionTodos,
     setThreadStatus,
+    setThreadVisibility,
     touchSessionUpdatedAt,
     updateSessionAgentState,
     updateSessionMetadata
@@ -39,7 +43,16 @@ export class SessionStore {
         model?: string,
         effort?: string,
         modelReasoningEffort?: string,
-        channelOpts?: { channelId?: string; threadTitle?: string; createdByUserId?: string }
+        channelOpts?: {
+            channelId?: string
+            threadTitle?: string
+            createdByUserId?: string
+            isChannelBot?: boolean
+            scheduled?: boolean
+            schedule?: string
+            pinned?: boolean
+            visibility?: ThreadVisibility
+        }
     ): StoredSession {
         return getOrCreateSession(this.db, tag, metadata, agentState, namespace, model, effort, modelReasoningEffort, channelOpts)
     }
@@ -134,5 +147,21 @@ export class SessionStore {
 
     attachToChannel(sessionId: string, namespace: string, channelId: string, threadTitle: string, createdByUserId: string): boolean {
         return attachToChannel(this.db, sessionId, namespace, channelId, threadTitle, createdByUserId)
+    }
+
+    setSessionPinned(sessionId: string, namespace: string, pinned: boolean): boolean {
+        return setSessionPinned(this.db, sessionId, namespace, pinned)
+    }
+
+    setThreadVisibility(sessionId: string, namespace: string, visibility: ThreadVisibility): boolean {
+        return setThreadVisibility(this.db, sessionId, namespace, visibility)
+    }
+
+    getChannelBotSessionId(channelId: string, namespace: string): string | null {
+        return getChannelBotSessionId(this.db, channelId, namespace)
+    }
+
+    getAllChannelBotSessions(): StoredSession[] {
+        return getAllChannelBotSessions(this.db)
     }
 }

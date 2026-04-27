@@ -51,15 +51,30 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     const initialState: AgentState = {};
     const initialModel = normalizeClaudeSessionModel(options.model);
     const initialEffort = normalizeClaudeSessionEffort(options.effort);
+
+    // Stage 2: read channel-bot context from env vars (set by runner during spawn)
+    const isChannelBot = process.env.HAPI_IS_CHANNEL_BOT === '1';
+    const channelId = process.env.HAPI_CHANNEL_ID || undefined;
+    const botName = process.env.HAPI_BOT_NAME || undefined;
+    const scheduledThread = process.env.HAPI_SCHEDULED_THREAD === '1';
+    const threadSchedule = process.env.HAPI_THREAD_SCHEDULE || undefined;
+    const metadataOverrides: Record<string, unknown> = {};
+    if (isChannelBot) metadataOverrides.isChannelBot = true;
+    if (channelId) metadataOverrides.channelId = channelId;
+    if (botName) metadataOverrides.botName = botName;
+    if (scheduledThread) metadataOverrides.scheduledThread = true;
+    if (threadSchedule) metadataOverrides.threadSchedule = threadSchedule;
+
     const { api, session, sessionInfo } = await bootstrapSession({
         flavor: 'claude',
         startedBy,
         workingDirectory,
         agentState: initialState,
         model: initialModel ?? undefined,
-        effort: initialEffort ?? undefined
+        effort: initialEffort ?? undefined,
+        metadataOverrides: Object.keys(metadataOverrides).length > 0 ? metadataOverrides as Partial<import('@/api/types').Metadata> : undefined
     });
-    logger.debug(`Session created: ${sessionInfo.id}`);
+    logger.debug(`Session created: ${sessionInfo.id}${isChannelBot ? ' [channel bot]' : ''}`);
 
     // Extract SDK metadata in background and update session when ready
     extractSDKMetadataAsync(async (sdkMetadata) => {
