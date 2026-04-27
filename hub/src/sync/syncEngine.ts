@@ -709,7 +709,8 @@ export class SyncEngine {
                 isChannelBot: true,
                 channelId: channel.id,
                 botName,
-                agentConfigJson: JSON.stringify(channel.agentConfig)
+                // Inject channelName into the config blob so the CLI can address the channel by name
+                agentConfigJson: JSON.stringify({ ...(channel.agentConfig as object), channelName: channel.name })
             }
         )
 
@@ -722,6 +723,225 @@ export class SyncEngine {
         }
 
         return result
+    }
+
+    /** Spawn a regular task thread in a channel, called by the channel bot via MCP. */
+    async botSpawnThread(
+        channelId: string,
+        namespace: string,
+        botSessionId: string,
+        opts: {
+            title: string
+            prompt: string
+            flavor?: 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
+            model?: string
+            scheduled?: boolean
+            schedule?: string
+        }
+    ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
+        const channel = this.store.channels.getChannel(channelId, namespace)
+        if (!channel) return { type: 'error', message: `Channel ${channelId} not found` }
+
+        // Find an online machine — prefer namespace match, fall back to any
+        const namespaceMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
+        let machine = namespaceMachines[0]
+        if (!machine) {
+            machine = this.machineCache.getOnlineMachines()[0]
+        }
+        if (!machine) return { type: 'error', message: 'No machine online for thread spawn' }
+
+        const flavor = opts.flavor ?? 'claude'
+        const safeChannelName = channel.name.replace(/[^a-zA-Z0-9_-]/g, '_')
+        const safeThreadName = opts.title.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40)
+        const homeDir = process.env.HAPI_HOME ?? `${process.env.HOME ?? '/tmp'}/.hapi`
+        const directory = `${homeDir}/workspaces/${namespace}/${safeChannelName}`
+
+        const result = await this.spawnSession(
+            machine.id,
+            directory,
+            flavor,
+            opts.model,
+            undefined,
+            true, // yolo
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            {
+                channelId,
+                scheduled: opts.scheduled,
+                schedule: opts.schedule
+            }
+        )
+
+        if (result.type === 'error') return result
+
+        const spawnedId = result.sessionId
+        // Attach the new session to the channel
+        this.attachSessionToChannel(spawnedId, channelId, namespace, opts.title, botSessionId)
+
+        // For scheduled threads, set the scheduled/pinned/visibility on the session row
+        if (opts.scheduled) {
+            this.store.sessions.setSessionPinned(spawnedId, namespace, true)
+            this.store.sessions.setThreadVisibility(spawnedId, namespace, 'shared')
+        }
+
+        // Emit a thread_card so the channel timeline shows the new thread
+        this.sendChannelMessage(
+            channelId,
+            namespace,
+            null,
+            'thread_card',
+            {
+                status: 'active',
+                taskTitle: opts.title,
+                threadId: spawnedId,
+                startedAt: Date.now(),
+                startedBy: botSessionId,
+                scheduled: opts.scheduled === true,
+                schedule: opts.schedule ?? null,
+                visibility: opts.scheduled ? 'shared' : 'private'
+            },
+            spawnedId
+        )
+
+        // Inject the prompt into the spawned thread (with retry — runner may not be ready yet)
+        const trySend = () => this.sendMessage(spawnedId, { text: opts.prompt, sentFrom: 'webapp' })
+        try {
+            await trySend()
+        } catch {
+            await new Promise((r) => setTimeout(r, 2000))
+            await trySend().catch((err) => {
+                console.error('[SyncEngine] Failed to send thread prompt:', err)
+            })
+        }
+
+        return result
+    }
+
+    async botSpawnScheduledThread(
+        channelId: string,
+        namespace: string,
+        botSessionId: string,
+        opts: { title: string; prompt: string; schedule: string; flavor?: 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'; model?: string }
+    ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
+        // Compose a system-prompt-like prefix that instructs the thread to use /loop
+        const wrappedPrompt = `<system>scheduled-task</system>\nYou are a scheduled monitoring thread. Use Claude Code's /loop slash command to run the task below on the schedule "${opts.schedule}". When you observe something noteworthy, call the MCP tool send_to_channel with a brief alert. When nothing has changed, stay silent (do not send anything).\n\nTask:\n${opts.prompt}`
+        return this.botSpawnThread(channelId, namespace, botSessionId, {
+            title: opts.title,
+            prompt: wrappedPrompt,
+            flavor: opts.flavor,
+            model: opts.model,
+            scheduled: true,
+            schedule: opts.schedule
+        })
+    }
+
+    async cancelThreadSession(threadId: string, namespace: string, reason?: string): Promise<void> {
+        const session = this.store.sessions.getSessionByNamespace(threadId, namespace)
+        if (!session) throw new Error(`Thread ${threadId} not found in namespace ${namespace}`)
+        if (!session.channelId) throw new Error(`Session ${threadId} is not a thread`)
+        // Mark thread as archived
+        this.store.sessions.setThreadStatus(threadId, namespace, 'archived')
+        // Best-effort kill the underlying CLI session via RPC
+        try {
+            await this.rpcGateway.killSession(threadId)
+        } catch (err) {
+            console.warn(`[SyncEngine] killSession ${threadId} failed (best-effort):`, err)
+        }
+        // Emit a summary card noting the cancel
+        this.sendChannelMessage(
+            session.channelId,
+            namespace,
+            null,
+            'agent_summary',
+            { status: 'canceled', taskTitle: session.threadTitle, threadId, reason: reason ?? 'canceled by bot' },
+            threadId
+        )
+    }
+
+    setSessionPinned(sessionId: string, namespace: string, pinned: boolean): boolean {
+        const ok = this.store.sessions.setSessionPinned(sessionId, namespace, pinned)
+        if (ok) {
+            this.eventPublisher.emit({
+                type: pinned ? 'thread-pinned' : 'thread-unpinned',
+                sessionId,
+                namespace
+            } as SyncEvent)
+        }
+        return ok
+    }
+
+    setThreadVisibility(sessionId: string, namespace: string, visibility: 'private' | 'shared'): boolean {
+        const ok = this.store.sessions.setThreadVisibility(sessionId, namespace, visibility)
+        if (ok) {
+            this.eventPublisher.emit({
+                type: 'thread-visibility-changed',
+                sessionId,
+                namespace,
+                visibility
+            } as SyncEvent)
+        }
+        return ok
+    }
+
+    toggleMessageReaction(
+        messageId: string,
+        channelId: string,
+        namespace: string,
+        reactorRef: string,
+        emoji: string
+    ): { result: 'added' | 'removed' } {
+        const r = this.store.channelMessageReactions.toggle(messageId, reactorRef, emoji)
+        this.eventPublisher.emit({
+            type: r.result === 'added' ? 'message-reaction-added' : 'message-reaction-removed',
+            channelId,
+            namespace,
+            messageId,
+            reactorRef,
+            emoji
+        } as SyncEvent)
+        return { result: r.result }
+    }
+
+    addMessageReaction(
+        messageId: string,
+        channelId: string,
+        namespace: string,
+        reactorRef: string,
+        emoji: string
+    ): void {
+        this.store.channelMessageReactions.add(messageId, reactorRef, emoji)
+        this.eventPublisher.emit({
+            type: 'message-reaction-added',
+            channelId,
+            namespace,
+            messageId,
+            reactorRef,
+            emoji
+        } as SyncEvent)
+    }
+
+    removeMessageReaction(
+        messageId: string,
+        channelId: string,
+        namespace: string,
+        reactorRef: string,
+        emoji: string
+    ): boolean {
+        const removed = this.store.channelMessageReactions.remove(messageId, reactorRef, emoji)
+        if (removed) {
+            this.eventPublisher.emit({
+                type: 'message-reaction-removed',
+                channelId,
+                namespace,
+                messageId,
+                reactorRef,
+                emoji
+            } as SyncEvent)
+        }
+        return removed
     }
 
     updateChannelData(

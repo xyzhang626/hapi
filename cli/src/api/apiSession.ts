@@ -664,6 +664,131 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
+    /** Read the current session metadata (Stage 2: used by MCP tools to check isChannelBot). */
+    getMetadata(): Metadata | null {
+        return this.metadata
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Stage 2: Channel-bot RPC methods.
+    // Each round-trips to hub via socket.emitWithAck('channel-bot:*'). Hub
+    // identifies the channel from session metadata (sid → channelId).
+    // No fallbacks: errors propagate to MCP tool handlers.
+    // ─────────────────────────────────────────────────────────────────
+
+    private async channelBotRpc<T = unknown>(event: string, payload: Record<string, unknown> = {}): Promise<T> {
+        const fullPayload = { sid: this.sessionId, ...payload }
+        const result = await this.socket.timeout(15_000).emitWithAck(event as any, fullPayload as any) as { ok: boolean; data?: T; error?: string }
+        if (!result || typeof result !== 'object') {
+            throw new Error(`channel-bot RPC ${event} returned invalid response`)
+        }
+        if (!result.ok) {
+            throw new Error(`channel-bot RPC ${event} failed: ${result.error ?? 'unknown error'}`)
+        }
+        return result.data as T
+    }
+
+    async sendToChannel(text: string): Promise<{ messageId: string; seq: number }> {
+        return await this.channelBotRpc('channel-bot:send-message', { text })
+    }
+
+    async reactToMessage(messageId: string, emoji: string): Promise<{ result: 'added' | 'removed' }> {
+        return await this.channelBotRpc('channel-bot:react-to-message', { messageId, emoji })
+    }
+
+    async botSpawnThread(args: {
+        title: string
+        prompt: string
+        flavor?: 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
+        model?: string
+    }): Promise<{ threadSessionId: string }> {
+        return await this.channelBotRpc('channel-bot:spawn-thread', args)
+    }
+
+    async botSpawnScheduledThread(args: {
+        title: string
+        prompt: string
+        schedule: string
+        flavor?: 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
+        model?: string
+    }): Promise<{ threadSessionId: string }> {
+        return await this.channelBotRpc('channel-bot:spawn-scheduled-thread', args)
+    }
+
+    async botCancelThread(threadId: string, reason?: string): Promise<{ ok: true }> {
+        return await this.channelBotRpc('channel-bot:cancel-thread', { threadId, reason })
+    }
+
+    async botSendToThread(threadId: string, text: string): Promise<{ messageId: string }> {
+        return await this.channelBotRpc('channel-bot:send-to-thread', { threadId, text })
+    }
+
+    async botPinThread(threadId: string): Promise<{ ok: true }> {
+        return await this.channelBotRpc('channel-bot:pin-thread', { threadId })
+    }
+
+    async botUnpinThread(threadId: string): Promise<{ ok: true }> {
+        return await this.channelBotRpc('channel-bot:unpin-thread', { threadId })
+    }
+
+    async botListThreads(): Promise<{
+        threads: Array<{
+            id: string
+            title: string | null
+            status: string | null
+            visibility: string
+            scheduled: boolean
+            schedule: string | null
+            pinned: boolean
+            active: boolean
+            createdAt: number
+            updatedAt: number
+        }>
+    }> {
+        return await this.channelBotRpc('channel-bot:list-threads')
+    }
+
+    async botGetThread(threadId: string): Promise<{
+        thread: {
+            id: string
+            title: string | null
+            status: string | null
+            visibility: string
+            scheduled: boolean
+            schedule: string | null
+            pinned: boolean
+            active: boolean
+            todos: unknown
+            createdAt: number
+            updatedAt: number
+        }
+    }> {
+        return await this.channelBotRpc('channel-bot:get-thread', { threadId })
+    }
+
+    async botGetChannelHistory(opts: { beforeSeq?: number; limit?: number } = {}): Promise<{
+        messages: Array<{
+            id: string
+            kind: string
+            authorUserId: string | null
+            body: unknown
+            seq: number
+            createdAt: number
+        }>
+    }> {
+        return await this.channelBotRpc('channel-bot:get-channel-history', opts)
+    }
+
+    async botListChannelMembers(): Promise<{
+        members: Array<{
+            userId: string
+            displayName: string
+            role: string
+        }>
+    }> {
+        return await this.channelBotRpc('channel-bot:list-channel-members')
+    }
+
     close(): void {
         this.rpcHandlerManager.onSocketDisconnect()
         this.terminalManager.closeAll()

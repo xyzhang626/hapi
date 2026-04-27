@@ -203,4 +203,47 @@ export interface ClientToServerEvents {
     'terminal:error': (data: TerminalErrorPayload) => void
     ping: (callback: () => void) => void
     'usage-report': (data: unknown) => void
+    // ─── Stage 2: channel-bot RPC events ─────────────────────────────
+    'channel-bot:send-message': (data: { sid: string; text: string }, cb: ChannelBotAck<{ messageId: string; seq: number }>) => void
+    'channel-bot:react-to-message': (data: { sid: string; messageId: string; emoji: string }, cb: ChannelBotAck<{ result: 'added' | 'removed' }>) => void
+    'channel-bot:spawn-thread': (data: { sid: string; title: string; prompt: string; flavor?: string; model?: string }, cb: ChannelBotAck<{ threadSessionId: string }>) => void
+    'channel-bot:spawn-scheduled-thread': (data: { sid: string; title: string; prompt: string; schedule: string; flavor?: string; model?: string }, cb: ChannelBotAck<{ threadSessionId: string }>) => void
+    'channel-bot:cancel-thread': (data: { sid: string; threadId: string; reason?: string }, cb: ChannelBotAck<{ ok: true }>) => void
+    'channel-bot:send-to-thread': (data: { sid: string; threadId: string; text: string }, cb: ChannelBotAck<{ messageId: string }>) => void
+    'channel-bot:pin-thread': (data: { sid: string; threadId: string }, cb: ChannelBotAck<{ ok: true }>) => void
+    'channel-bot:unpin-thread': (data: { sid: string; threadId: string }, cb: ChannelBotAck<{ ok: true }>) => void
+    'channel-bot:list-threads': (data: { sid: string }, cb: ChannelBotAck<{ threads: ChannelBotThread[] }>) => void
+    'channel-bot:get-thread': (data: { sid: string; threadId: string }, cb: ChannelBotAck<{ thread: ChannelBotThread & { todos: unknown } }>) => void
+    'channel-bot:get-channel-history': (data: { sid: string; beforeSeq?: number; limit?: number }, cb: ChannelBotAck<{ messages: ChannelBotHistoryMessage[] }>) => void
+    'channel-bot:list-channel-members': (data: { sid: string }, cb: ChannelBotAck<{ members: ChannelBotMember[] }>) => void
+}
+
+export type ChannelBotAck<T> = (response: { ok: true; data: T } | { ok: false; error: string }) => void
+
+export interface ChannelBotThread {
+    id: string
+    title: string | null
+    status: string | null
+    visibility: string
+    scheduled: boolean
+    schedule: string | null
+    pinned: boolean
+    active: boolean
+    createdAt: number
+    updatedAt: number
+}
+
+export interface ChannelBotHistoryMessage {
+    id: string
+    kind: string
+    authorUserId: string | null
+    body: unknown
+    seq: number
+    createdAt: number
+}
+
+export interface ChannelBotMember {
+    userId: string
+    displayName: string
+    role: string
 }

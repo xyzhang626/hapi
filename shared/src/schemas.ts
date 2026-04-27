@@ -334,6 +334,40 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
     ChannelChangedSchema.extend({
         type: z.literal('channel-member-removed'),
         userId: z.string()
+    }),
+    // Stage 2: reactions
+    ChannelChangedSchema.extend({
+        type: z.literal('message-reaction-added'),
+        messageId: z.string(),
+        reactorRef: z.string(),
+        emoji: z.string()
+    }),
+    ChannelChangedSchema.extend({
+        type: z.literal('message-reaction-removed'),
+        messageId: z.string(),
+        reactorRef: z.string(),
+        emoji: z.string()
+    }),
+    // Stage 2: thread pin/visibility (no channel scoping needed since session events
+    // already carry namespace; the consumer can map sessionId → channelId via cache)
+    SessionEventBaseSchema.extend({
+        type: z.literal('thread-pinned'),
+        sessionId: z.string()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('thread-unpinned'),
+        sessionId: z.string()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('thread-visibility-changed'),
+        sessionId: z.string(),
+        visibility: z.enum(['private', 'shared'])
+    }),
+    // Stage 2: bot status indicator (typing-style live state)
+    ChannelChangedSchema.extend({
+        type: z.literal('channel-bot-typing'),
+        sessionId: z.string(),
+        action: z.string().nullable()
     })
 ])
 

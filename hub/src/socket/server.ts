@@ -35,6 +35,7 @@ export type SocketServerDeps = {
     jwtSecret: Uint8Array
     corsOrigins?: string[]
     getSession?: (sessionId: string) => { active: boolean; namespace: string } | null
+    getSyncEngine?: () => import('../sync/syncEngine').SyncEngine | null
     onWebappEvent?: (event: SyncEvent) => void
     onSessionAlive?: (payload: { sid: string; time: number; thinking?: boolean; mode?: 'local' | 'remote' }) => void
     onSessionEnd?: (payload: { sid: string; time: number }) => void
@@ -117,7 +118,8 @@ export function createSocketServer(deps: SocketServerDeps): {
         onMachineAlive: deps.onMachineAlive,
         onWebappEvent: deps.onWebappEvent,
         onBackgroundTaskDelta: deps.onBackgroundTaskDelta,
-        onSessionActivity: deps.onSessionActivity
+        onSessionActivity: deps.onSessionActivity,
+        getSyncEngine: deps.getSyncEngine
     }))
 
     terminalNs.use(async (socket, next) => {

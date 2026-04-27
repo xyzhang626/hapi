@@ -175,6 +175,35 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     let currentAllowedTools: string[] | undefined = undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = undefined; // Track current disallowed tools
 
+    // Stage 2: if this is a channel-bot or scheduled-thread session, build
+    // an appended system prompt with role + tool guidance.
+    if (isChannelBot) {
+        const { buildChannelBotSystemPrompt } = await import('./utils/systemPrompt');
+        // Try to get channel name from agentConfig (sent via env). Fall back to channelId.
+        let channelName = channelId ?? 'channel';
+        let agentConfigJson: string | undefined = process.env.HAPI_AGENT_CONFIG_JSON || undefined;
+        try {
+            if (agentConfigJson) {
+                const cfg = JSON.parse(agentConfigJson);
+                if (typeof cfg?.channelName === 'string') channelName = cfg.channelName;
+            }
+        } catch { /* ignore */ }
+        currentAppendSystemPrompt = buildChannelBotSystemPrompt({
+            channelName,
+            namespace: process.env.HAPI_NAMESPACE ?? 'default',
+            botName: botName ?? 'Agent',
+            agentConfigJson
+        });
+        logger.debug('[runClaude] Channel-bot system prompt installed');
+    } else if (scheduledThread && threadSchedule) {
+        const { buildScheduledThreadSystemPrompt } = await import('./utils/systemPrompt');
+        currentAppendSystemPrompt = buildScheduledThreadSystemPrompt({
+            schedule: threadSchedule,
+            taskPrompt: process.env.HAPI_CUSTOM_SYSTEM_PROMPT ?? '(see initial prompt)'
+        });
+        logger.debug('[runClaude] Scheduled-thread system prompt installed');
+    }
+
     const syncSessionModes = () => {
         const sessionInstance = currentSessionRef.current;
         if (!sessionInstance) {
