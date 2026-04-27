@@ -120,7 +120,19 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         const id = c.req.param('id')
         const r = requireChannelMember(c, engine, id)
         if (r instanceof Response) return r
-        return c.json({ members: engine.getChannelMembers(id) })
+        // Stage 2 cross-namespace: members come from many namespaces, so enrich
+        // each row with displayName (and namespace) via the global lookup so the
+        // web UI can show "Alice Wei (alice)" instead of raw userId.
+        const members = engine.getChannelMembers(id)
+        const enriched = members.map((m) => {
+            const u = engine.getWorkspaceUserGlobal(m.userId)
+            return {
+                ...m,
+                displayName: u?.displayName ?? m.userId,
+                namespace: u?.namespace ?? null
+            }
+        })
+        return c.json({ members: enriched })
     })
 
     // POST /channels/:id/members — add member (membership check)

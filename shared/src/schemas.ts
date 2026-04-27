@@ -221,7 +221,12 @@ export const ChannelMemberSchema = z.object({
     channelId: z.string(),
     userId: z.string(),
     role: z.enum(['owner', 'member']),
-    joinedAt: z.number()
+    joinedAt: z.number(),
+    // Stage 2: hub enriches the response with the global workspace_users
+    // lookup so the web can render "Alice Wei (alice)" instead of raw ids.
+    // Optional because older callers / tests may not set them.
+    displayName: z.string().optional(),
+    namespace: z.string().nullable().optional()
 })
 
 export type ChannelMember = z.infer<typeof ChannelMemberSchema>

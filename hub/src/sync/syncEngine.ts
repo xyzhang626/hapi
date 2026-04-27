@@ -1394,6 +1394,15 @@ export class SyncEngine {
     }
 
     /**
+     * Cross-namespace user lookup. Returns the workspaceUsers row for any
+     * namespace that owns this userId. Use to render members / authors in
+     * shared channels where the user's namespace differs from the channel's.
+     */
+    getWorkspaceUserGlobal(userId: string) {
+        return this.store.workspaceUsers.getUserGlobal(userId)
+    }
+
+    /**
      * Resolve a user's display name across all namespaces. Stage 2 channels
      * are membership-based; an invited user's namespace differs from the
      * channel owner's, so a per-namespace lookup misses them. The userId is

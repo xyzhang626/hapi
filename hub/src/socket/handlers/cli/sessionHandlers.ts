@@ -256,6 +256,13 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+        // Track this sid so we can synthesize session-end for it on disconnect
+        // (covers the bot-crash case where the CLI subprocess is killed and
+        // never sends a graceful session-end). See SocketData.trackedSessionIds.
+        if (!socket.data.trackedSessionIds) {
+            socket.data.trackedSessionIds = new Set<string>()
+        }
+        socket.data.trackedSessionIds.add(data.sid)
         onSessionAlive?.(data)
     })
 
@@ -284,6 +291,9 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+        // Graceful session-end — drop from disconnect-recovery tracker so we
+        // don't fire it twice when the socket later disconnects.
+        socket.data.trackedSessionIds?.delete(data.sid)
         onSessionEnd?.(data)
     })
 }

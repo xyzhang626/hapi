@@ -146,5 +146,19 @@ export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlers
     socket.on('disconnect', () => {
         rpcRegistry.unregisterAll(socket)
         cleanupTerminalHandlers(socket, { terminalRegistry, terminalNamespace })
+        // Stage 2: synthesize session-end for any sessions this CLI socket
+        // had reported as alive. Covers the bot-crash case where the CLI
+        // subprocess is killed (SIGKILL / OOM) and never sends a graceful
+        // session-end RPC. SIGTERM-shutdowns will already have fired
+        // session-end and cleared the set, so this is the SIGKILL safety
+        // net.
+        const tracked = socket.data.trackedSessionIds
+        if (tracked && tracked.size > 0 && onSessionEnd) {
+            const now = Date.now()
+            for (const sid of tracked) {
+                onSessionEnd({ sid, time: now })
+            }
+            tracked.clear()
+        }
     })
 }

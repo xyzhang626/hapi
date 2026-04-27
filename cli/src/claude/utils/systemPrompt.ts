@@ -51,9 +51,28 @@ export function buildChannelBotSystemPrompt(args: {
   customAddition?: string
 }): string {
   const cfg = args.agentConfigJson ? safeParse(args.agentConfigJson) : null
-  const customAddition = (cfg && typeof cfg === 'object' && cfg !== null && typeof (cfg as any).systemPromptAddition === 'string')
-    ? (cfg as any).systemPromptAddition
+  const cfgObj = (cfg && typeof cfg === 'object' && cfg !== null) ? (cfg as Record<string, unknown>) : null
+  const customAddition = (cfgObj && typeof cfgObj.systemPromptAddition === 'string')
+    ? (cfgObj.systemPromptAddition as string)
     : (args.customAddition ?? '')
+
+  // Stage 2 (mvp-ux-stage-2.md §11): branch the "Welcome behavior" line on
+  // the agentConfig.welcomeStyle field. Default = 'auto' (post a greeting on
+  // __channel_initialized). 'skip' = stay silent on init. 'custom:...' =
+  // use the trailing text as the greeting copy.
+  const rawStyle = (cfgObj && typeof cfgObj.welcomeStyle === 'string')
+    ? (cfgObj.welcomeStyle as string).trim()
+    : 'auto'
+  let welcomeBehavior: string
+  if (rawStyle === 'skip') {
+    welcomeBehavior = 'Welcome behavior: when you receive <system>__channel_initialized</system>, stay silent — call noop() and do NOT post a greeting. The channel owner has explicitly opted out of welcome messages.'
+  } else if (rawStyle.startsWith('custom:')) {
+    const customText = rawStyle.slice('custom:'.length).trim()
+    welcomeBehavior = `Welcome behavior: when you receive <system>__channel_initialized</system>, post exactly this greeting via send_to_channel:\n\n${customText}`
+  } else {
+    // 'auto' or anything unrecognized → default greeting
+    welcomeBehavior = 'Welcome behavior: when you receive <system>__channel_initialized</system>, post a brief, friendly greeting via send_to_channel introducing yourself and how channel members can delegate work to you. Mention the channel name.'
+  }
 
   return trimIdent(`
 You are "${args.botName}", the persistent channel agent for #${args.channelName} in workspace ${args.namespace}.
@@ -105,9 +124,7 @@ Behavior rules:
 7. Your full conversation transcript is visible (read-only) to the channel
    owner via the bot session page. Be honest in your reasoning.
 
-Welcome behavior: when you receive <system>__channel_initialized</system>,
-post a brief, friendly greeting via send_to_channel introducing yourself
-and how channel members can delegate work to you. Mention the channel name.
+${welcomeBehavior}
 
 ${customAddition ? `\nAdditional instructions from channel owner:\n${customAddition}` : ''}
 `)

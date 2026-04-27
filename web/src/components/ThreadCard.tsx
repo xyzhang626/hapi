@@ -13,8 +13,24 @@ export function ThreadCard({ data, kind, onOpen }: ThreadCardProps) {
 
     const isCompleted = status === 'completed'
     const isFailed = status === 'failed'
-    const statusColor = isFailed ? '#ef4444' : isCompleted ? '#22c55e' : '#3b82f6'
-    const statusLabel = isFailed ? 'Failed' : isCompleted ? 'Completed' : 'Active'
+    // Stage 2: bot's cancel_thread MCP emits agent_summary with status='canceled'
+    // (per syncEngine.botCancelThread). Treat the same as a final-state badge,
+    // distinct from the default blue "Active" used for in-flight threads.
+    const isCanceled = status === 'canceled' || status === 'cancelled'
+    const statusColor = isFailed
+        ? '#ef4444'
+        : isCompleted
+            ? '#22c55e'
+            : isCanceled
+                ? '#94a3b8'
+                : '#3b82f6'
+    const statusLabel = isFailed
+        ? 'Failed'
+        : isCompleted
+            ? 'Completed'
+            : isCanceled
+                ? 'Cancelled'
+                : 'Active'
 
     return (
         <div
