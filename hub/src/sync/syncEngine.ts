@@ -1018,6 +1018,9 @@ export class SyncEngine {
         namespace: string,
         updates: { name?: string; description?: string | null; agentConfig?: unknown | null }
     ): boolean {
+        // Capture pre-update state so we can detect transitions (e.g., agentConfig
+        // arriving for the first time) that should trigger side effects.
+        const before = this.store.channels.getChannel(channelId, namespace)
         const updated = this.store.channels.updateChannel(channelId, namespace, updates)
         if (updated) {
             this.channelCache.updateChannel(channelId, namespace)
@@ -1032,6 +1035,19 @@ export class SyncEngine {
                 } catch (err) {
                     console.error('[SyncEngine] mirror agentConfig to file failed:', err)
                 }
+            }
+            // Stage 2: if agentConfig was just added (null/undefined → present) and
+            // the channel has no bot session yet, spawn one. Without this, the
+            // AgentConfigEditor's "Save" on a previously-bot-less channel would
+            // silently leave the user stuck — file written, no bot ever appears.
+            const hadConfig = before?.agentConfig != null
+            const hasConfig = updates.agentConfig != null && updates.agentConfig !== undefined
+            const hadBot = before?.botSessionId != null
+            if (!hadConfig && hasConfig && !hadBot) {
+                console.log(`[SyncEngine] agentConfig added to channel ${channelId} — spawning bot`)
+                void this.spawnChannelBot(channelId, namespace).catch((err) => {
+                    console.error('[SyncEngine] auto-spawn after agentConfig set failed:', err)
+                })
             }
         }
         return updated

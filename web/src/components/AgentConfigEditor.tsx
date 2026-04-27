@@ -50,7 +50,14 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
         setError(null)
     }, [initialConfig])
 
-    const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(normalize(initialConfig)), [draft, initialConfig])
+    // When the channel had no agentConfig at all, the very first save initializes
+    // it — treat the form as dirty so the user can press Save without
+    // having to mutate a field. Otherwise compare against the normalized
+    // initial state.
+    const dirty = useMemo(() => {
+        if (initialConfig == null) return true
+        return JSON.stringify(draft) !== JSON.stringify(normalize(initialConfig))
+    }, [draft, initialConfig])
 
     const handleSave = async () => {
         if (!canEdit) return
@@ -152,7 +159,10 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
                             <input
                                 type="number"
                                 value={draft.debounceMs ?? 3000}
-                                onChange={(e) => update('debounceMs', Number(e.target.value) || 3000)}
+                                onChange={(e) => {
+                                    const n = Number(e.target.value)
+                                    update('debounceMs', Number.isFinite(n) ? n : 3000)
+                                }}
                                 disabled={!canEdit || saving}
                                 min={500}
                                 max={30000}
