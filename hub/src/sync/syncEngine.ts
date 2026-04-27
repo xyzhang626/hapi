@@ -1012,12 +1012,52 @@ export class SyncEngine {
         return updated
     }
 
-    deleteChannel(channelId: string, namespace: string): boolean {
+    deleteChannel(channelId: string, namespace: string, options?: { hardDelete?: boolean }): boolean {
+        const channel = this.store.channels.getChannel(channelId, namespace)
+        if (!channel) return false
+        const hard = options?.hardDelete === true
+
+        // Stage 2: archive threads + kill bot session before deleting the row
+        const sessions = this.store.sessions.getSessionsByChannel(channelId, namespace)
+        for (const s of sessions) {
+            if (s.isChannelBot) {
+                // Best-effort kill of bot CLI session
+                this.rpcGateway.killSession(s.id).catch(() => {/* */})
+                this.store.sessions.deleteSession(s.id, namespace)
+            } else {
+                this.store.sessions.setThreadStatus(s.id, namespace, 'archived')
+            }
+        }
+
         this.store.sessions.detachSessionsFromChannel(channelId, namespace)
         const deleted = this.store.channels.deleteChannel(channelId, namespace)
         if (deleted) {
             this.channelCache.removeChannel(channelId, namespace)
         }
+
+        // Stage 2: filesystem cleanup. Always rename to {name}-archived-{ts}; hard
+        // mode deletes the renamed folder afterwards.
+        try {
+            const safeName = channel.name.replace(/[^a-zA-Z0-9_-]/g, '_')
+            const homeDir = process.env.HAPI_HOME ?? `${process.env.HOME ?? '/tmp'}/.hapi`
+            const dir = `${homeDir}/workspaces/${namespace}/${safeName}`
+            const archived = `${dir}-archived-${Date.now()}`
+            const fs = require('node:fs') as typeof import('node:fs')
+            if (fs.existsSync(dir)) {
+                fs.renameSync(dir, archived)
+                if (hard) {
+                    fs.rmSync(archived, { recursive: true, force: true })
+                }
+            }
+        } catch (err) {
+            console.error('[SyncEngine] channel filesystem cleanup failed:', err)
+        }
+
+        // Remove agent.json file
+        if (this.agentConfigStore) {
+            try { this.agentConfigStore.delete(channelId) } catch { /* */ }
+        }
+
         return deleted
     }
 

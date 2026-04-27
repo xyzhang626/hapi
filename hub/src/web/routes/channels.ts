@@ -67,6 +67,7 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
     })
 
     // DELETE /channels/:id — delete channel (membership + personal channel protection + detach sessions)
+    // Stage 2: ?hard=true also removes the workspace folder (default soft = rename to -archived)
     app.delete('/channels/:id', (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) return engine
@@ -79,9 +80,10 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         if (engine.isPersonalChannel(id)) {
             return c.json({ error: 'Cannot delete personal channel' }, 403)
         }
-        const deleted = engine.deleteChannel(id, namespace)
+        const hard = c.req.query('hard') === 'true' || c.req.query('hard') === '1'
+        const deleted = engine.deleteChannel(id, namespace, { hardDelete: hard })
         if (!deleted) return c.json({ error: 'Failed to delete channel' }, 500)
-        return c.json({ ok: true })
+        return c.json({ ok: true, hard })
     })
 
     // GET /channels/:id/members — list members (membership check)
