@@ -1177,6 +1177,10 @@ export class SyncEngine {
         // Use the cross-namespace listing so bot sessions registered under a
         // different namespace (e.g. embedded-runner's 'default') are still
         // found and cleaned up — otherwise the FK on channels.id trips.
+        // We also kill thread CLI subprocesses, not just mark them archived,
+        // so they stop checkpointing into the workspace folder we're about
+        // to rename — otherwise the subprocess re-creates it via mkdirSync
+        // and the user sees a ghost {channelName}/ next to {-archived-ts}/.
         const sessions = this.store.sessions.getAllSessionsByChannel(channelId)
         for (const s of sessions) {
             if (s.isChannelBot) {
@@ -1184,9 +1188,10 @@ export class SyncEngine {
                 this.rpcGateway.killSession(s.id).catch(() => {/* */})
                 this.store.sessions.deleteSessionAnyNamespace(s.id)
             } else {
-                // Archive threads in their own namespace (they belong to the
-                // user who created them).
+                // Archive threads (they belong to the user who created them)
+                // AND best-effort kill the CLI subprocess so it stops writing.
                 this.store.sessions.setThreadStatus(s.id, s.namespace, 'archived')
+                this.rpcGateway.killSession(s.id).catch(() => {/* */})
             }
         }
 
