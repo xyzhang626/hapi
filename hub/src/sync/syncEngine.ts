@@ -70,6 +70,9 @@ export class SyncEngine {
      *  user with the same topic within a short window (avoids double-clicks
      *  spawning two threads). Keyed by `${channelId}|${userId}|${topic}`. */
     private readonly threadRequestDedupe: Map<string, number> = new Map()
+    /** Stage 2: how long to wait after a channel-bot session ends before
+     *  the watchdog respawns it. Production = 5s. Tests override to 0. */
+    private botWatchdogRestartDelayMs = 5_000
 
     constructor(
         store: Store,
@@ -276,12 +279,19 @@ export class SyncEngine {
             const namespace = session.namespace
             const oldSessionId = payload.sid
             console.log(`[SyncEngine] Channel bot ${oldSessionId} ended — scheduling restart for channel ${channelId}`)
+            const delay = this.botWatchdogRestartDelayMs
             setTimeout(() => {
                 this.spawnChannelBot(channelId, namespace, { resumeSessionId: oldSessionId }).catch((err) => {
                     console.error('[SyncEngine] Channel bot restart failed:', err)
                 })
-            }, 5000)
+            }, delay)
         }
+    }
+
+    /** Override the channel-bot watchdog restart delay. Tests use this
+     *  to drive the watchdog synchronously without sleeping 5s. */
+    setBotWatchdogRestartDelayMsForTesting(ms: number): void {
+        this.botWatchdogRestartDelayMs = ms
     }
 
     handleBackgroundTaskDelta(sessionId: string, delta: { started: number; completed: number }): void {
