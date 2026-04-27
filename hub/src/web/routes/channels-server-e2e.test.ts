@@ -53,7 +53,13 @@ function createStoreSyncAdapter(store: Store) {
         updateThreadStatus: (sessionId: string, ns: string, status: 'active' | 'completed' | 'archived') =>
             store.sessions.setThreadStatus(sessionId, ns, status),
         getWorkspaceUser: (ns: string, userId: string) =>
-            store.workspaceUsers.getUser(ns, userId)
+            store.workspaceUsers.getUser(ns, userId),
+        getReactionsForMessages: (messageIds: string[]) =>
+            store.channelMessageReactions.getForMessages(messageIds),
+        toggleMessageReaction: (messageId: string, _channelId: string, _ns: string, reactorRef: string, emoji: string) =>
+            store.channelMessageReactions.toggle(messageId, reactorRef, emoji),
+        removeMessageReaction: (messageId: string, _channelId: string, _ns: string, reactorRef: string, emoji: string) =>
+            store.channelMessageReactions.remove(messageId, reactorRef, emoji)
     }
 }
 
@@ -360,6 +366,72 @@ describe('channels server E2E (real HTTP)', () => {
             })
             expect(delRes.status).toBe(403)
             expect((await delRes.json() as any).error).toBe('Cannot delete personal channel')
+        })
+    })
+
+    // ------------------------------------------------------------------
+    // 6. Reactions (Stage 2)
+    // ------------------------------------------------------------------
+    describe('message reactions', () => {
+        it('toggle adds and removes a reaction; GET messages includes reactions[]', async () => {
+            // Alice creates a channel + sends a message
+            const createRes = await fetch(`${baseUrl}/api/channels`, {
+                method: 'POST', headers: authHeaders(aliceToken),
+                body: JSON.stringify({ name: 'reactions-test' })
+            })
+            const { channel } = await createRes.json() as any
+
+            const sendRes = await fetch(`${baseUrl}/api/channels/${channel.id}/messages`, {
+                method: 'POST', headers: authHeaders(aliceToken),
+                body: JSON.stringify({ body: { text: 'react to me' } })
+            })
+            const { message } = await sendRes.json() as any
+
+            // Alice toggles 👀 → added
+            const r1 = await fetch(`${baseUrl}/api/channels/${channel.id}/messages/${message.id}/reactions`, {
+                method: 'POST', headers: authHeaders(aliceToken),
+                body: JSON.stringify({ emoji: '👀' })
+            })
+            expect(r1.status).toBe(200)
+            expect((await r1.json() as any).result).toBe('added')
+
+            // GET messages includes reactions
+            const msgsRes = await fetch(`${baseUrl}/api/channels/${channel.id}/messages`, {
+                headers: authHeaders(aliceToken)
+            })
+            const { messages } = await msgsRes.json() as any
+            expect(messages[0].reactions).toHaveLength(1)
+            expect(messages[0].reactions[0].emoji).toBe('👀')
+            expect(messages[0].reactions[0].reactorRef).toBe('user:1')
+
+            // Alice toggles 👀 again → removed
+            const r2 = await fetch(`${baseUrl}/api/channels/${channel.id}/messages/${message.id}/reactions`, {
+                method: 'POST', headers: authHeaders(aliceToken),
+                body: JSON.stringify({ emoji: '👀' })
+            })
+            expect((await r2.json() as any).result).toBe('removed')
+
+            // Cleanup
+            await fetch(`${baseUrl}/api/channels/${channel.id}`, { method: 'DELETE', headers: authHeaders(aliceToken) })
+        })
+
+        it('non-member cannot react', async () => {
+            const createRes = await fetch(`${baseUrl}/api/channels`, {
+                method: 'POST', headers: authHeaders(aliceToken),
+                body: JSON.stringify({ name: 'private-react' })
+            })
+            const { channel } = await createRes.json() as any
+            const sendRes = await fetch(`${baseUrl}/api/channels/${channel.id}/messages`, {
+                method: 'POST', headers: authHeaders(aliceToken),
+                body: JSON.stringify({ body: { text: 'private msg' } })
+            })
+            const { message } = await sendRes.json() as any
+            const bobReact = await fetch(`${baseUrl}/api/channels/${channel.id}/messages/${message.id}/reactions`, {
+                method: 'POST', headers: authHeaders(bobToken),
+                body: JSON.stringify({ emoji: '👀' })
+            })
+            expect(bobReact.status).toBe(403)
+            await fetch(`${baseUrl}/api/channels/${channel.id}`, { method: 'DELETE', headers: authHeaders(aliceToken) })
         })
     })
 })

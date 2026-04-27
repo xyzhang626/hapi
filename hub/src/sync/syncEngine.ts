@@ -944,6 +944,14 @@ export class SyncEngine {
         return removed
     }
 
+    getReactionsForMessage(messageId: string) {
+        return this.store.channelMessageReactions.getForMessage(messageId)
+    }
+
+    getReactionsForMessages(messageIds: string[]) {
+        return this.store.channelMessageReactions.getForMessages(messageIds)
+    }
+
     updateChannelData(
         channelId: string,
         namespace: string,

@@ -148,12 +148,51 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         if (before !== undefined && isNaN(before)) return c.json({ error: 'Invalid before parameter' }, 400)
         if (limit !== undefined && isNaN(limit)) return c.json({ error: 'Invalid limit parameter' }, 400)
         const messages = engine.getChannelMessages(id, { before, limit })
+        // Stage 2: bulk-fetch reactions for all returned messages
+        const reactionsByMessage = engine.getReactionsForMessages(messages.map((m) => m.id))
         const enriched = messages.map((msg) => {
-            if (!msg.authorUserId) return msg
+            const reactions = reactionsByMessage.get(msg.id) ?? []
+            const base = { ...msg, reactions }
+            if (!msg.authorUserId) return base
             const wsUser = engine.getWorkspaceUser(namespace, msg.authorUserId)
-            return { ...msg, authorDisplayName: wsUser?.displayName ?? msg.authorUserId }
+            return { ...base, authorDisplayName: wsUser?.displayName ?? msg.authorUserId }
         })
         return c.json({ messages: enriched })
+    })
+
+    // POST /channels/:id/messages/:messageId/reactions — toggle a reaction (Stage 2)
+    app.post('/channels/:id/messages/:messageId/reactions', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const namespace = c.get('namespace')
+        const userId = String(c.get('userId'))
+        const channelId = c.req.param('id')
+        const messageId = c.req.param('messageId')
+        const channel = engine.getChannel(channelId, namespace)
+        if (!channel) return c.json({ error: 'Channel not found' }, 404)
+        if (!engine.isChannelMember(channelId, userId)) return c.json({ error: 'Not a member of this channel' }, 403)
+        const body = await parseBody<{ emoji: string }>(c)
+        if (!body || typeof body.emoji !== 'string' || body.emoji.length === 0) {
+            return c.json({ error: 'emoji required' }, 400)
+        }
+        const result = engine.toggleMessageReaction(messageId, channelId, namespace, `user:${userId}`, body.emoji)
+        return c.json({ result: result.result })
+    })
+
+    // DELETE /channels/:id/messages/:messageId/reactions/:emoji — explicit remove
+    app.delete('/channels/:id/messages/:messageId/reactions/:emoji', (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const namespace = c.get('namespace')
+        const userId = String(c.get('userId'))
+        const channelId = c.req.param('id')
+        const messageId = c.req.param('messageId')
+        const emoji = decodeURIComponent(c.req.param('emoji'))
+        const channel = engine.getChannel(channelId, namespace)
+        if (!channel) return c.json({ error: 'Channel not found' }, 404)
+        if (!engine.isChannelMember(channelId, userId)) return c.json({ error: 'Not a member of this channel' }, 403)
+        const removed = engine.removeMessageReaction(messageId, channelId, namespace, `user:${userId}`, emoji)
+        return c.json({ removed })
     })
 
     // POST /channels/:id/messages — send message (membership check)
