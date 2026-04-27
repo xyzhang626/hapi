@@ -102,6 +102,31 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
             return c.json({ error: 'Invalid body' }, 400)
         }
 
+        // Stage 2: promote channel-bot fields from metadata to top-level columns
+        // so the SSE channel-bot-typing emitter (and other gates that read
+        // session.isChannelBot directly) actually fire. Without this, the CLI
+        // would write isChannelBot only into the metadata blob and the column
+        // stays at 0.
+        const meta = parsed.data.metadata as
+            | {
+                isChannelBot?: boolean
+                channelId?: string
+                threadTitle?: string
+                createdByUserId?: string
+                scheduledThread?: boolean
+                threadSchedule?: string
+            }
+            | null
+            | undefined
+        const channelOpts = meta && typeof meta === 'object' ? {
+            channelId: typeof meta.channelId === 'string' ? meta.channelId : undefined,
+            threadTitle: typeof meta.threadTitle === 'string' ? meta.threadTitle : undefined,
+            createdByUserId: typeof meta.createdByUserId === 'string' ? meta.createdByUserId : undefined,
+            isChannelBot: meta.isChannelBot === true ? true : undefined,
+            scheduled: meta.scheduledThread === true ? true : undefined,
+            schedule: typeof meta.threadSchedule === 'string' ? meta.threadSchedule : undefined
+        } : undefined
+
         const namespace = c.get('namespace')
         const session = engine.getOrCreateSession(
             parsed.data.tag,
@@ -110,7 +135,8 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
             namespace,
             parsed.data.model,
             parsed.data.effort,
-            parsed.data.modelReasoningEffort
+            parsed.data.modelReasoningEffort,
+            channelOpts
         )
         return c.json({ session })
     })

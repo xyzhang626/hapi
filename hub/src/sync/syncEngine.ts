@@ -314,7 +314,16 @@ export class SyncEngine {
         model?: string,
         effort?: string,
         modelReasoningEffort?: string,
-        channelOpts?: { channelId?: string; threadTitle?: string; createdByUserId?: string }
+        channelOpts?: {
+            channelId?: string
+            threadTitle?: string
+            createdByUserId?: string
+            isChannelBot?: boolean
+            scheduled?: boolean
+            schedule?: string
+            pinned?: boolean
+            visibility?: 'private' | 'shared'
+        }
     ): Session {
         return this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace, model, effort, modelReasoningEffort, channelOpts)
     }
