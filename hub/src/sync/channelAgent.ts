@@ -124,6 +124,12 @@ export class ChannelAgent {
             this.handleSessionUpdate(event)
         } else if (event.type === 'channel-thread-requested') {
             this.handleThreadRequested(event)
+        } else if (event.type === 'channel-updated') {
+            // Stage 2: an agentConfig hot-reload (botName / debounceMs etc.)
+            // may have changed how this channel's strong-signal regex should
+            // match. Drop the cached ChannelContext so the next lookup
+            // re-reads the fresh agentConfig.
+            this.invalidateChannelContext(event.channelId)
         }
     }
 

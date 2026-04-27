@@ -290,17 +290,26 @@ export function registerChannelBotHandlers(socket: CliSocketWithData, deps: Chan
                 before: payload.beforeSeq,
                 limit: payload.limit ?? 50
             })
+            // Stage 2: enrich with cross-namespace displayName so the bot can
+            // refer to past speakers by name when catching up after crash.
             ack({
                 ok: true,
                 data: {
-                    messages: messages.map((m) => ({
-                        id: m.id,
-                        kind: m.kind,
-                        authorUserId: m.authorUserId,
-                        body: m.body,
-                        seq: m.seq,
-                        createdAt: m.createdAt
-                    }))
+                    messages: messages.map((m) => {
+                        const wsUser = m.authorUserId
+                            ? (store.workspaceUsers.getUser(ctx.namespace, m.authorUserId)
+                                ?? store.workspaceUsers.getUserGlobal(m.authorUserId))
+                            : null
+                        return {
+                            id: m.id,
+                            kind: m.kind,
+                            authorUserId: m.authorUserId,
+                            authorDisplayName: wsUser?.displayName ?? m.authorUserId ?? null,
+                            body: m.body,
+                            seq: m.seq,
+                            createdAt: m.createdAt
+                        }
+                    })
                 }
             })
         } catch (e) {
@@ -315,10 +324,17 @@ export function registerChannelBotHandlers(socket: CliSocketWithData, deps: Chan
             if (!ctx.ok) return ack({ ok: false, error: ctx.error })
             const members = store.channels.getMembers(ctx.channelId)
             const enriched = members.map((m) => {
+                // Stage 2: channels are membership-based across namespaces, so
+                // most members live in their own namespace, NOT the channel's.
+                // A namespace-scoped lookup misses them and the bot ends up
+                // addressing users by raw userId. Use the global lookup so the
+                // bot can say "Aisha", "Liam", "Maya" instead of "2296578145".
                 const wsUser = store.workspaceUsers.getUser(ctx.namespace, m.userId)
+                    ?? store.workspaceUsers.getUserGlobal(m.userId)
                 return {
                     userId: m.userId,
                     displayName: wsUser?.displayName ?? m.userId,
+                    namespace: wsUser?.namespace ?? null,
                     role: m.role
                 }
             })
