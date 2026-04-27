@@ -226,6 +226,15 @@ export const ChannelMemberSchema = z.object({
 
 export type ChannelMember = z.infer<typeof ChannelMemberSchema>
 
+export const ChannelMessageReactionSchema = z.object({
+    messageId: z.string(),
+    reactorRef: z.string(),
+    emoji: z.string(),
+    createdAt: z.number()
+})
+
+export type ChannelMessageReaction = z.infer<typeof ChannelMessageReactionSchema>
+
 export const ChannelMessageSchema = z.object({
     id: z.string(),
     channelId: z.string(),
@@ -235,7 +244,12 @@ export const ChannelMessageSchema = z.object({
     body: z.unknown(),
     threadSessionId: z.string().nullable(),
     createdAt: z.number(),
-    seq: z.number()
+    seq: z.number(),
+    // Stage 2: GET /channels/:id/messages enriches each message with the
+    // matching reactions[] from channel_message_reactions. Optional so
+    // older payloads / channels without reactions still validate.
+    reactions: z.array(ChannelMessageReactionSchema).optional(),
+    authorDisplayName: z.string().optional()
 })
 
 export type ChannelMessage = z.infer<typeof ChannelMessageSchema>
@@ -355,17 +369,19 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         reactorRef: z.string(),
         emoji: z.string()
     }),
-    // Stage 2: thread pin/visibility (no channel scoping needed since session events
-    // already carry namespace; the consumer can map sessionId → channelId via cache)
-    SessionEventBaseSchema.extend({
+    // Stage 2: thread pin/visibility. ChannelChangedSchema gives us
+    // channelId so the SSE layer can membership-filter alongside the
+    // other channel-* events (otherwise channel-only subscribers miss
+    // pin/visibility changes for sibling threads).
+    ChannelChangedSchema.extend({
         type: z.literal('thread-pinned'),
         sessionId: z.string()
     }),
-    SessionEventBaseSchema.extend({
+    ChannelChangedSchema.extend({
         type: z.literal('thread-unpinned'),
         sessionId: z.string()
     }),
-    SessionEventBaseSchema.extend({
+    ChannelChangedSchema.extend({
         type: z.literal('thread-visibility-changed'),
         sessionId: z.string(),
         visibility: z.enum(['private', 'shared'])

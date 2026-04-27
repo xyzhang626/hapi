@@ -151,7 +151,14 @@ export class SessionCache {
             channelId: stored.channelId ?? undefined,
             threadTitle: stored.threadTitle ?? undefined,
             threadStatus: (stored.threadStatus as 'active' | 'completed' | 'archived') ?? undefined,
-            createdByUserId: stored.createdByUserId ?? undefined
+            createdByUserId: stored.createdByUserId ?? undefined,
+            // Stage 2 fields — without these, the channel-bot detection in
+            // `emitChannelBotTypingIfApplicable` and similar guards never fires.
+            isChannelBot: stored.isChannelBot,
+            scheduled: stored.scheduled,
+            schedule: stored.schedule ?? undefined,
+            pinned: stored.pinned,
+            visibility: stored.visibility
         }
 
         this.sessions.set(sessionId, session)

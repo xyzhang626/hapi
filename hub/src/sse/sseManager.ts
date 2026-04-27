@@ -188,7 +188,11 @@ export class SSEManager {
 
         if (event.type === 'channel-added' || event.type === 'channel-updated' || event.type === 'channel-removed'
             || event.type === 'channel-message-received' || event.type === 'channel-member-added'
-            || event.type === 'channel-member-removed') {
+            || event.type === 'channel-member-removed'
+            || event.type === 'message-reaction-added' || event.type === 'message-reaction-removed'
+            || event.type === 'channel-bot-typing'
+            || event.type === 'thread-pinned' || event.type === 'thread-unpinned'
+            || event.type === 'thread-visibility-changed') {
             if (!connection.userId) return false
             if (event.type === 'channel-member-removed' && event.userId === connection.userId) {
                 return true

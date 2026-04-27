@@ -436,10 +436,9 @@ function ChannelsPage() {
     const { personalChannelId } = useWorkspaceDefaults(api, 'user')
     const { messages, refetch: refetchMessages } = useChannelMessages(api, selectedChannelId)
     const { sessions: channelSessions } = useChannelSessions(api, selectedChannelId)
-    const botTypingAction = useChannelBotTyping(selectedChannelId)
-    const { width: sidebarWidth, onPointerDown: handleResizePointerDown } = useSidebarResize()
-
     const selectedChannel = channels.find((c) => c.id === selectedChannelId) ?? null
+    const botTypingAction = useChannelBotTyping(api, selectedChannelId, (selectedChannel as { botSessionId?: string | null } | null)?.botSessionId ?? null)
+    const { width: sidebarWidth, onPointerDown: handleResizePointerDown } = useSidebarResize()
 
     const handleSelectChannel = useCallback((channelId: string) => {
         navigate({ to: '/channels/$channelId', params: { channelId } })

@@ -6,6 +6,7 @@ export type {
     Channel,
     ChannelMember,
     ChannelMessage,
+    ChannelMessageReaction,
     DecryptedMessage,
     Metadata,
     Session,

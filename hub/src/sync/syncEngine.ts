@@ -900,9 +900,18 @@ export class SyncEngine {
     setSessionPinned(sessionId: string, namespace: string, pinned: boolean): boolean {
         const ok = this.store.sessions.setSessionPinned(sessionId, namespace, pinned)
         if (ok) {
+            const session = this.store.sessions.getSession(sessionId)
+            const channelId = session?.channelId
+            if (!channelId) {
+                throw new Error(`setSessionPinned: session ${sessionId} has no channelId — pin events require channel scoping`)
+            }
+            // Refresh in-memory cache so subsequent reads (and the
+            // session-updated broadcast) reflect the new pinned flag.
+            this.sessionCache.refreshSession(sessionId)
             this.eventPublisher.emit({
                 type: pinned ? 'thread-pinned' : 'thread-unpinned',
                 sessionId,
+                channelId,
                 namespace
             } as SyncEvent)
         }
@@ -912,9 +921,16 @@ export class SyncEngine {
     setThreadVisibility(sessionId: string, namespace: string, visibility: 'private' | 'shared'): boolean {
         const ok = this.store.sessions.setThreadVisibility(sessionId, namespace, visibility)
         if (ok) {
+            const session = this.store.sessions.getSession(sessionId)
+            const channelId = session?.channelId
+            if (!channelId) {
+                throw new Error(`setThreadVisibility: session ${sessionId} has no channelId — visibility events require channel scoping`)
+            }
+            this.sessionCache.refreshSession(sessionId)
             this.eventPublisher.emit({
                 type: 'thread-visibility-changed',
                 sessionId,
+                channelId,
                 namespace,
                 visibility
             } as SyncEvent)

@@ -569,13 +569,7 @@ export function useSSE(options: {
             ) {
                 queueSessionDetailInvalidation(event.sessionId)
                 queueSessionListInvalidation()
-                // The session's channelId is on the cached session detail; invalidate
-                // any channel-sessions list that may include this thread.
-                const sessionResp = queryClient.getQueryData<SessionResponse | undefined>(queryKeys.session(event.sessionId))
-                const channelId = sessionResp?.session?.channelId
-                if (channelId) {
-                    void queryClient.invalidateQueries({ queryKey: queryKeys.channelSessions(channelId) })
-                }
+                void queryClient.invalidateQueries({ queryKey: queryKeys.channelSessions(event.channelId) })
             }
 
             if (event.type === 'channel-bot-typing') {

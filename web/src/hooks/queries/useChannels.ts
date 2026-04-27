@@ -77,13 +77,29 @@ export function useChannelSessions(api: ApiClient | null, channelId: string | un
  * `channel-bot-typing` events whenever the bot session's `thinking` flag
  * transitions; useSSE writes the latest action string into this query
  * (or null when the bot is idle).
+ *
+ * Cold-start: if the user opens a channel mid-thinking, no transition
+ * fires. Seed the query from the bot session's current `thinking` flag
+ * (refetched whenever the channel detail surfaces a botSessionId).
  */
-export function useChannelBotTyping(channelId: string | undefined): string | null {
+export function useChannelBotTyping(
+    api: ApiClient | null,
+    channelId: string | undefined,
+    botSessionId: string | null | undefined
+): string | null {
     const query = useQuery<string | null>({
         queryKey: queryKeys.channelBotTyping(channelId ?? ''),
-        queryFn: () => null,
+        queryFn: async () => {
+            if (!api || !botSessionId) return null
+            try {
+                const resp = await api.getSession(botSessionId)
+                return resp.session?.thinking ? 'thinking' : null
+            } catch {
+                return null
+            }
+        },
         enabled: Boolean(channelId),
-        staleTime: Infinity,
+        staleTime: 5_000,
         gcTime: Infinity,
     })
     return query.data ?? null
