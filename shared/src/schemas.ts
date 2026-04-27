@@ -191,7 +191,13 @@ export const SessionSchema = z.object({
     channelId: z.string().optional(),
     threadTitle: z.string().optional(),
     threadStatus: z.enum(['active', 'completed', 'archived']).optional(),
-    createdByUserId: z.string().optional()
+    createdByUserId: z.string().optional(),
+    // Stage 2 fields
+    isChannelBot: z.boolean().optional(),
+    scheduled: z.boolean().optional(),
+    schedule: z.string().nullable().optional(),
+    pinned: z.boolean().optional(),
+    visibility: z.enum(['private', 'shared']).optional()
 })
 
 export type Session = z.infer<typeof SessionSchema>
@@ -205,7 +211,8 @@ export const ChannelSchema = z.object({
     createdBy: z.string(),
     createdAt: z.number(),
     updatedAt: z.number(),
-    nextSeq: z.number()
+    nextSeq: z.number(),
+    botSessionId: z.string().nullable().optional()
 })
 
 export type Channel = z.infer<typeof ChannelSchema>

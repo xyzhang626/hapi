@@ -1,31 +1,46 @@
 import type { SyncEvent } from '@hapi/protocol/types'
 import type { SyncEngine } from './syncEngine'
 
-type TaskEntry = {
-    channelId: string
-    namespace: string
-    userId: string
-    taskTitle: string
-    messageBody: string
-    sessionId?: string
-    startedAt?: number
+/**
+ * Stage 2 ChannelAgent — pure message router.
+ *
+ * Responsibilities (only):
+ *   1. Detect strong signals (@mention, thread state changes,
+ *      channel-thread-requested) and immediately inject them into the
+ *      channel's bot session as user messages tagged <system>...</system>.
+ *   2. Debounce weak signals (other real-user messages) per-channel
+ *      and flush them as a batched user message either when 2 messages
+ *      have accumulated OR after 3s of idle.
+ *
+ * Things this no longer does (moved to bot via MCP):
+ *   - Spawn threads on @mention
+ *   - Generate thread_card / agent_summary messages
+ *   - Maintain a task queue with MAX_ACTIVE limits
+ *
+ * Bot's own channel-bot:send-message outputs do NOT feed back into the
+ * bot session (avoid self-excitation). We detect this by message body
+ * having `fromBot: true` or `fromSession === botSessionId`.
+ */
+
+const WEAK_SIGNAL_DEBOUNCE_MS = 3_000
+const WEAK_SIGNAL_FLUSH_THRESHOLD = 2
+
+type WeakBuffer = {
+    pending: Array<{ authorUserId: string | null; text: string; messageId: string; seq: number; createdAt: number }>
+    timer: ReturnType<typeof setTimeout> | null
 }
 
-type ChannelQueue = {
-    active: Map<string, TaskEntry>
-    queue: TaskEntry[]
+type ChannelContext = {
+    botSessionId: string
+    botName: string
 }
-
-const MAX_ACTIVE_PER_CHANNEL = 2
-const MAX_QUEUED_PER_CHANNEL = 20
 
 export class ChannelAgent {
-    private readonly channels: Map<string, ChannelQueue> = new Map()
+    private readonly weakBuffers: Map<string, WeakBuffer> = new Map()
+    private readonly channelContextCache: Map<string, ChannelContext | null> = new Map()
     private unsubscribe: (() => void) | null = null
 
-    constructor(
-        private readonly engine: SyncEngine
-    ) {
+    constructor(private readonly engine: SyncEngine) {
         this.unsubscribe = engine.subscribe((event) => this.handleEvent(event))
     }
 
@@ -34,6 +49,11 @@ export class ChannelAgent {
             this.unsubscribe()
             this.unsubscribe = null
         }
+        for (const buf of this.weakBuffers.values()) {
+            if (buf.timer) clearTimeout(buf.timer)
+        }
+        this.weakBuffers.clear()
+        this.channelContextCache.clear()
     }
 
     private handleEvent(event: SyncEvent): void {
@@ -44,233 +64,190 @@ export class ChannelAgent {
         }
     }
 
+    /** Look up bot session id + name for a channel; cached. */
+    private getChannelContext(channelId: string, namespace: string): ChannelContext | null {
+        if (this.channelContextCache.has(channelId)) {
+            return this.channelContextCache.get(channelId) ?? null
+        }
+        const channel = this.engine.getChannel(channelId, namespace)
+        if (!channel || !channel.botSessionId) {
+            this.channelContextCache.set(channelId, null)
+            return null
+        }
+        const cfg = channel.agentConfig as { botName?: string } | null
+        const ctx: ChannelContext = {
+            botSessionId: channel.botSessionId,
+            botName: cfg?.botName ?? 'Agent'
+        }
+        this.channelContextCache.set(channelId, ctx)
+        return ctx
+    }
+
+    /** Invalidate context cache (e.g., after bot restart with new sessionId). */
+    private invalidateChannelContext(channelId: string): void {
+        this.channelContextCache.delete(channelId)
+    }
+
     private handleChannelMessage(event: Extract<SyncEvent, { type: 'channel-message-received' }>): void {
         const message = event.message
-        if (message.kind !== 'text') return
+        const namespace = event.namespace ?? ''
+        if (!namespace) return
 
-        const body = typeof message.body === 'string' ? message.body : JSON.stringify(message.body)
-        if (!body.toLowerCase().includes('@agent') && !body.toLowerCase().includes('@claude')) return
+        const ctx = this.getChannelContext(event.channelId, namespace)
+        if (!ctx) return // No bot for this channel
 
-        const taskTitle = this.extractTaskTitle(body)
-        const entry: TaskEntry = {
-            channelId: event.channelId,
-            namespace: event.namespace ?? '',
-            userId: message.authorUserId ?? '',
-            taskTitle,
-            messageBody: body
+        // Skip messages emitted by the bot itself (avoid self-excitation)
+        const body = message.body
+        if (typeof body === 'object' && body !== null) {
+            const b = body as { fromBot?: boolean; fromSession?: string }
+            if (b.fromBot === true || b.fromSession === ctx.botSessionId) {
+                return
+            }
         }
 
-        this.enqueue(entry)
+        // Skip system-injected messages (those have authorUserId=null and are
+        // typically thread_card / agent_summary). Only real human text should
+        // be forwarded.
+        if (message.authorUserId === null) {
+            return
+        }
+        if (message.kind !== 'text') {
+            return
+        }
+
+        const text = this.extractText(body)
+        if (!text) return
+
+        // Strong signal: @mention of bot
+        if (this.isStrongMentionSignal(text, ctx.botName)) {
+            this.flushWeakBuffer(event.channelId, namespace, ctx) // flush pending weak first to preserve order
+            this.forwardStrongSignal(event.channelId, namespace, ctx, 'mentioned', message, text)
+            return
+        }
+
+        // Otherwise — weak signal: enqueue for debounced flush
+        this.enqueueWeakSignal(event.channelId, namespace, ctx, message, text)
     }
 
     private handleSessionUpdate(event: Extract<SyncEvent, { type: 'session-updated' }>): void {
         const sessionId = event.sessionId
         const session = this.engine.getSession(sessionId)
         if (!session?.channelId) return
+        const namespace = session.namespace
+        const ctx = this.getChannelContext(session.channelId, namespace)
+        if (!ctx) return
 
-        const queue = this.channels.get(session.channelId)
-        if (!queue) return
-
-        const task = queue.active.get(sessionId)
-        if (!task) return
-
-        if (!session.active && task.startedAt) {
-            this.completeTask(task, session)
-        }
-    }
-
-    private enqueue(entry: TaskEntry): void {
-        let queue = this.channels.get(entry.channelId)
-        if (!queue) {
-            queue = { active: new Map(), queue: [] }
-            this.channels.set(entry.channelId, queue)
-        }
-
-        if (queue.active.size < MAX_ACTIVE_PER_CHANNEL) {
-            this.startTask(entry, queue).catch((err) => {
-                console.error('[ChannelAgent] startTask failed:', err)
-                this.releaseTask(entry, queue, 'internal_error')
-            })
-        } else if (queue.queue.length < MAX_QUEUED_PER_CHANNEL) {
-            queue.queue.push(entry)
-        }
-    }
-
-    private async startTask(entry: TaskEntry, queue: ChannelQueue): Promise<void> {
-        const channel = this.engine.getChannel(entry.channelId, entry.namespace)
-        if (!channel) return
-
-        const agentConfig = channel.agentConfig as { flavor?: string; model?: string; systemPrompt?: string } | null
-        const flavor = (agentConfig?.flavor ?? 'claude') as 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
-
-        const machines = this.engine.getMachinesByNamespace(entry.namespace)
-        const onlineMachine = machines.find((m) => m.active)
-        if (!onlineMachine) {
-            this.engine.sendChannelMessage(
-                entry.channelId,
-                entry.namespace,
-                null,
-                'agent_summary',
-                { status: 'failed', taskTitle: entry.taskTitle, reason: 'no_machine_online', startedBy: entry.userId },
-                undefined
-            )
+        // Skip the bot session's own state changes
+        if (sessionId === ctx.botSessionId) {
+            // But: if the bot session has just become inactive (likely a restart),
+            // invalidate the context cache so the next bot session id is picked up.
+            if (!session.active) {
+                this.invalidateChannelContext(session.channelId)
+            }
             return
         }
 
-        const metadata = onlineMachine.metadata as { path?: string; homeDir?: string } | null
-        const directory = metadata?.path ?? metadata?.homeDir ?? '/'
-
-        entry.startedAt = Date.now()
-
-        const taskPrompt = entry.messageBody.replace(/@agent|@claude/gi, '').trim()
-
-        try {
-            const result = await this.engine.spawnSession(
-                onlineMachine.id,
-                directory,
-                flavor,
-                agentConfig?.model,
-                undefined,
-                true
-            )
-
-            if (result.type === 'error') {
-                this.releaseTask(entry, queue, 'spawn_failed')
-                return
-            }
-
-            const spawnedId = result.sessionId
-            entry.sessionId = spawnedId
-
-            // Attach FIRST — may emit synchronous session-updated, but task is NOT in queue yet
-            // so handleSessionUpdate will harmlessly skip it
-            this.engine.attachSessionToChannel(spawnedId, entry.channelId, entry.namespace, entry.taskTitle, entry.userId)
-
-            // Send thread_card SECOND
-            this.engine.sendChannelMessage(
-                entry.channelId,
-                entry.namespace,
-                null,
-                'thread_card',
-                {
-                    status: 'active',
-                    taskTitle: entry.taskTitle,
-                    threadId: spawnedId,
-                    startedAt: entry.startedAt,
-                    startedBy: entry.userId
-                },
-                spawnedId
-            )
-
-            // Add to active queue LAST — now handleSessionUpdate can track real completions
-            queue.active.set(spawnedId, entry)
-
-            if (taskPrompt) {
-                // The spawned session may not be ready to receive messages immediately.
-                // Retry once after a short delay if the first attempt fails.
-                const trySend = () => this.engine.sendMessage(spawnedId, {
-                    text: taskPrompt,
-                    sentFrom: 'webapp'
-                })
-                try {
-                    await trySend()
-                } catch {
-                    await new Promise((r) => setTimeout(r, 2000))
-                    await trySend().catch((err) => {
-                        console.error('[ChannelAgent] Failed to send task prompt:', err)
-                    })
-                }
-            }
-        } catch {
-            this.releaseTask(entry, queue, 'spawn_failed')
-        }
-    }
-
-    private releaseTask(entry: TaskEntry, queue: ChannelQueue, reason: string): void {
-        if (entry.sessionId) {
-            queue.active.delete(entry.sessionId)
-        }
-        this.engine.sendChannelMessage(
-            entry.channelId,
-            entry.namespace,
-            null,
-            'agent_summary',
-            {
-                status: 'failed',
-                taskTitle: entry.taskTitle,
-                reason,
-                startedBy: entry.userId
-            },
-            entry.sessionId
-        )
-        this.drainQueue(entry.channelId)
-    }
-
-    private completeTask(
-        task: TaskEntry,
-        session: { id: string; todos?: unknown; active: boolean; createdAt: number }
-    ): void {
-        const queue = this.channels.get(task.channelId)
-        if (!queue) return
-
-        queue.active.delete(session.id)
-
-        const todos = this.extractTodoSummary(session.todos)
-        const durationMs = task.startedAt ? Date.now() - task.startedAt : 0
-
-        this.engine.sendChannelMessage(
-            task.channelId,
-            task.namespace,
-            null,
-            'agent_summary',
-            {
-                status: 'completed',
-                taskTitle: task.taskTitle,
-                threadId: session.id,
-                durationMs,
-                todos,
-                startedBy: task.userId
-            },
-            session.id
-        )
-
-        this.drainQueue(task.channelId)
-    }
-
-    private drainQueue(channelId: string): void {
-        const queue = this.channels.get(channelId)
-        if (!queue) return
-
-        while (queue.active.size < MAX_ACTIVE_PER_CHANNEL && queue.queue.length > 0) {
-            const next = queue.queue.shift()!
-            this.startTask(next, queue).catch((err) => {
-                console.error('[ChannelAgent] startTask failed:', err)
-                this.releaseTask(next, queue, 'internal_error')
+        // Strong signal: thread session state change (active → inactive = completion or stall)
+        // We flag it whenever active flips. The bot decides what to do.
+        // To avoid spamming, only fire when active=false (completion-ish) for now.
+        if (!session.active) {
+            this.flushWeakBuffer(session.channelId, namespace, ctx)
+            const tag = `thread-completed`
+            const summary = `<system>${tag}: { threadId: "${sessionId}", title: "${session.threadTitle ?? ''}", status: "${session.threadStatus ?? 'completed'}" }</system>`
+            void this.engine.sendMessage(ctx.botSessionId, { text: summary, sentFrom: 'webapp' }).catch((err) => {
+                console.error('[ChannelAgent] forward thread state failed:', err)
             })
         }
     }
 
-    private extractTaskTitle(body: string): string {
-        const cleaned = body.replace(/@agent|@claude/gi, '').trim()
-        const firstLine = cleaned.split('\n')[0] ?? ''
-        const title = firstLine.slice(0, 100).trim()
-        return title || 'Agent task'
+    private isStrongMentionSignal(text: string, botName: string): boolean {
+        const lower = text.toLowerCase()
+        if (lower.includes('@agent') || lower.includes('@claude') || lower.includes('@bot')) return true
+        if (botName) {
+            const aliasLower = `@${botName.toLowerCase()}`
+            if (lower.includes(aliasLower)) return true
+        }
+        return false
     }
 
-    private extractTodoSummary(todos: unknown): { completed: number; total: number } {
-        if (!todos || !Array.isArray(todos)) {
-            return { completed: 0, total: 0 }
-        }
-        let completed = 0
-        let total = 0
-        for (const todo of todos) {
-            if (typeof todo === 'object' && todo !== null) {
-                total++
-                if ('status' in todo && (todo as { status: string }).status === 'completed') {
-                    completed++
-                }
+    private extractText(body: unknown): string {
+        if (typeof body === 'string') return body
+        if (typeof body === 'object' && body !== null) {
+            const b = body as { text?: string }
+            if (typeof b.text === 'string') return b.text
+            try {
+                return JSON.stringify(body)
+            } catch {
+                return ''
             }
         }
-        return { completed, total }
+        return String(body ?? '')
+    }
+
+    private forwardStrongSignal(
+        channelId: string,
+        namespace: string,
+        ctx: ChannelContext,
+        tag: string,
+        message: { id: string; authorUserId: string | null; createdAt: number },
+        text: string
+    ): void {
+        const wrapped = `<system>${tag}: { authorUserId: "${message.authorUserId ?? 'unknown'}", messageId: "${message.id}" }</system>\n${text}`
+        void this.engine.sendMessage(ctx.botSessionId, { text: wrapped, sentFrom: 'webapp' }).catch((err) => {
+            console.error('[ChannelAgent] forward strong signal failed:', err)
+        })
+    }
+
+    private enqueueWeakSignal(
+        channelId: string,
+        namespace: string,
+        ctx: ChannelContext,
+        message: { id: string; authorUserId: string | null; seq: number; createdAt: number },
+        text: string
+    ): void {
+        let buf = this.weakBuffers.get(channelId)
+        if (!buf) {
+            buf = { pending: [], timer: null }
+            this.weakBuffers.set(channelId, buf)
+        }
+
+        buf.pending.push({
+            authorUserId: message.authorUserId,
+            text,
+            messageId: message.id,
+            seq: message.seq,
+            createdAt: message.createdAt
+        })
+
+        // Reset the idle timer
+        if (buf.timer) clearTimeout(buf.timer)
+
+        if (buf.pending.length >= WEAK_SIGNAL_FLUSH_THRESHOLD) {
+            this.flushWeakBuffer(channelId, namespace, ctx)
+        } else {
+            buf.timer = setTimeout(() => {
+                this.flushWeakBuffer(channelId, namespace, ctx)
+            }, WEAK_SIGNAL_DEBOUNCE_MS)
+        }
+    }
+
+    private flushWeakBuffer(channelId: string, namespace: string, ctx: ChannelContext): void {
+        const buf = this.weakBuffers.get(channelId)
+        if (!buf || buf.pending.length === 0) return
+        if (buf.timer) {
+            clearTimeout(buf.timer)
+            buf.timer = null
+        }
+        const items = buf.pending
+        buf.pending = []
+
+        const lines = items.map((it) => {
+            return `[${it.authorUserId ?? 'anon'} | msgId=${it.messageId}] ${it.text}`
+        }).join('\n')
+        const wrapped = `<system>weak-signal-batch: { count: ${items.length} }</system>\n${lines}`
+
+        void this.engine.sendMessage(ctx.botSessionId, { text: wrapped, sentFrom: 'webapp' }).catch((err) => {
+            console.error('[ChannelAgent] flush weak buffer failed:', err)
+        })
     }
 }
