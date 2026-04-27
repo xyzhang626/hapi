@@ -297,6 +297,58 @@ describe('channels server E2E (real HTTP)', () => {
                 headers: authHeaders(aliceToken)
             })
         })
+
+        it('only the channel owner can edit agentConfig', async () => {
+            // Alice creates a channel with an initial agentConfig
+            const createRes = await fetch(`${baseUrl}/api/channels`, {
+                method: 'POST',
+                headers: authHeaders(aliceToken),
+                body: JSON.stringify({ name: 'agentcfg-owner', agentConfig: { botName: 'Sherlock' } })
+            })
+            expect(createRes.status).toBe(201)
+            const { channel } = await createRes.json() as any
+
+            // Alice adds Bob as member
+            await fetch(`${baseUrl}/api/channels/${channel.id}/members`, {
+                method: 'POST',
+                headers: authHeaders(aliceToken),
+                body: JSON.stringify({ userId: '2', role: 'member' })
+            })
+
+            // Bob (member, non-owner) tries to edit agentConfig — must 403
+            const bobUpdate = await fetch(`${baseUrl}/api/channels/${channel.id}`, {
+                method: 'PUT',
+                headers: authHeaders(bobToken),
+                body: JSON.stringify({ agentConfig: { botName: 'Hacker' } })
+            })
+            expect(bobUpdate.status).toBe(403)
+            const bobErr = await bobUpdate.json() as any
+            expect(bobErr.error).toContain('owner')
+
+            // Bob can still edit non-agentConfig fields (description)
+            const bobDescUpdate = await fetch(`${baseUrl}/api/channels/${channel.id}`, {
+                method: 'PUT',
+                headers: authHeaders(bobToken),
+                body: JSON.stringify({ description: 'updated by member' })
+            })
+            expect(bobDescUpdate.status).toBe(200)
+
+            // Alice (owner) can edit agentConfig
+            const aliceUpdate = await fetch(`${baseUrl}/api/channels/${channel.id}`, {
+                method: 'PUT',
+                headers: authHeaders(aliceToken),
+                body: JSON.stringify({ agentConfig: { botName: 'Watson' } })
+            })
+            expect(aliceUpdate.status).toBe(200)
+            const updated = await aliceUpdate.json() as any
+            expect(updated.channel.agentConfig.botName).toBe('Watson')
+
+            // Cleanup
+            await fetch(`${baseUrl}/api/channels/${channel.id}`, {
+                method: 'DELETE',
+                headers: authHeaders(aliceToken)
+            })
+        })
     })
 
     // ------------------------------------------------------------------

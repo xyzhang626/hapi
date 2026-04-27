@@ -3,6 +3,8 @@ import { Link } from '@tanstack/react-router'
 import type { ApiClient } from '@/api/client'
 import type { ChannelMessage, Channel, Session } from '@/types/api'
 import { ThreadCard } from './ThreadCard'
+import { AgentConfigEditor } from './AgentConfigEditor'
+import { useAppContext } from '@/lib/app-context'
 
 const QUICK_EMOJIS = ['👀', '👍', '🙏', '🤔', '✅', '⏳', '😅']
 
@@ -23,6 +25,9 @@ type ChannelViewMessage = ChannelMessage & {
 }
 
 export function ChannelView({ api, channel, messages, sessions, onOpenThread, onRefresh, botTypingAction }: ChannelViewProps) {
+    const { userId } = useAppContext()
+    const [showSettings, setShowSettings] = useState(false)
+    const isOwner = userId != null && channel.createdBy === userId
     const [input, setInput] = useState('')
     const [sending, setSending] = useState(false)
     const scrollRef = useRef<HTMLDivElement>(null)
@@ -94,6 +99,18 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                                 ✨ Bot session →
                             </Link>
                         )}
+                        <button
+                            onClick={() => setShowSettings(true)}
+                            className="text-xs px-2 py-1 rounded-full"
+                            style={{
+                                background: 'var(--app-subtle-bg)',
+                                color: 'var(--app-fg)',
+                                border: '1px solid var(--app-border)'
+                            }}
+                            title={isOwner ? 'Edit channel agent settings' : 'View channel agent settings (owner-only edits)'}
+                        >
+                            ⚙ Settings
+                        </button>
                     </div>
                 </div>
                 {pinnedThreads.length > 0 && (
@@ -195,6 +212,21 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                     </button>
                 </div>
             </div>
+
+            {showSettings && (
+                <AgentConfigEditor
+                    api={api}
+                    channelId={channel.id}
+                    initialConfig={(channel.agentConfig ?? null) as Parameters<typeof AgentConfigEditor>[0]['initialConfig']}
+                    canEdit={isOwner}
+                    onClose={() => setShowSettings(false)}
+                    onSaved={() => {
+                        // Channel updates flow back through SSE channel-updated and
+                        // the channels query invalidation in useSSE.
+                        onRefresh()
+                    }}
+                />
+            )}
         </div>
     )
 }

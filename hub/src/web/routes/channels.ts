@@ -49,7 +49,7 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         return c.json({ channel })
     })
 
-    // PUT /channels/:id — update channel (membership check)
+    // PUT /channels/:id — update channel (membership check; agentConfig requires owner)
     app.put('/channels/:id', async (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) return engine
@@ -61,6 +61,10 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         if (!engine.isChannelMember(id, userId)) return c.json({ error: 'Not a member of this channel' }, 403)
         const body = await parseBody<{ name?: string; description?: string | null; agentConfig?: unknown | null }>(c)
         if (!body) return c.json({ error: 'Invalid body' }, 400)
+        // Stage 2: editing agentConfig is owner-only (drives bot identity / behavior).
+        if (body.agentConfig !== undefined && channel.createdBy !== userId) {
+            return c.json({ error: 'Only the channel owner can edit agentConfig' }, 403)
+        }
         const updated = engine.updateChannelData(id, namespace, body)
         if (!updated) return c.json({ error: 'Failed to update channel' }, 500)
         return c.json({ channel: engine.getChannel(id, namespace)! })

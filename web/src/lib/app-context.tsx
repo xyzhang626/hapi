@@ -5,6 +5,9 @@ type AppContextValue = {
     api: ApiClient
     token: string
     baseUrl: string
+    /** Stage 2: current authenticated user id, used for owner checks
+     *  (e.g. AgentConfigEditor visibility against channel.createdBy). */
+    userId: string | null
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
