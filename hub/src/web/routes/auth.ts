@@ -46,8 +46,11 @@ export function createAuthRoutes(
             if (!parsedToken || !constantTimeEquals(parsedToken.baseToken, configuration.cliApiToken)) {
                 return c.json({ error: 'Invalid access token' }, 401)
             }
-            userId = await getOrCreateOwnerId()
-            firstName = 'Web User'
+            const displayNameRaw = parsedToken.displayName ?? parsedToken.namespace
+            // Derive a stable unique userId per displayName so each person gets their own identity
+            const { createHash } = await import('node:crypto')
+            userId = createHash('sha256').update(`${parsedToken.namespace}:${displayNameRaw}`).digest().readUInt32BE(0)
+            firstName = displayNameRaw
             namespace = parsedToken.namespace
         } else {
             if (!configuration.telegramEnabled || !configuration.telegramBotToken) {

@@ -117,8 +117,8 @@ export class ChannelAgent {
             return
         }
 
-        const metadata = onlineMachine.metadata as { path?: string } | null
-        const directory = metadata?.path ?? '/'
+        const metadata = onlineMachine.metadata as { path?: string; homeDir?: string } | null
+        const directory = metadata?.path ?? metadata?.homeDir ?? '/'
 
         entry.startedAt = Date.now()
 
@@ -129,7 +129,9 @@ export class ChannelAgent {
                 onlineMachine.id,
                 directory,
                 flavor,
-                agentConfig?.model
+                agentConfig?.model,
+                undefined,
+                true
             )
 
             if (result.type === 'error') {
@@ -139,11 +141,12 @@ export class ChannelAgent {
 
             const spawnedId = result.sessionId
             entry.sessionId = spawnedId
-            queue.active.set(spawnedId, entry)
 
-            // Attach the spawned session to the channel so handleSessionUpdate can find it
+            // Attach FIRST — may emit synchronous session-updated, but task is NOT in queue yet
+            // so handleSessionUpdate will harmlessly skip it
             this.engine.attachSessionToChannel(spawnedId, entry.channelId, entry.namespace, entry.taskTitle, entry.userId)
 
+            // Send thread_card SECOND
             this.engine.sendChannelMessage(
                 entry.channelId,
                 entry.namespace,
@@ -158,6 +161,9 @@ export class ChannelAgent {
                 },
                 spawnedId
             )
+
+            // Add to active queue LAST — now handleSessionUpdate can track real completions
+            queue.active.set(spawnedId, entry)
 
             if (taskPrompt) {
                 // The spawned session may not be ready to receive messages immediately.
