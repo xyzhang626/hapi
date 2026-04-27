@@ -35,8 +35,15 @@ coverage/
 
 # Claude local settings
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
 localdocs/
 execplan/
+
+# Playwright test artifacts
+.playwright/
+.playwright-cli/
+screenshot-*.png
 
 # Generated npm bundle output (local)
 cli/npm/main/
