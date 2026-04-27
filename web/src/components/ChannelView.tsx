@@ -83,7 +83,12 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
     }
 
     const sortedMessages = ([...messages] as ChannelViewMessage[]).sort((a, b) => a.seq - b.seq)
-    const pinnedThreads = (sessions ?? []).filter((s) => (s as any).pinned)
+    // Stage 2: bot session lives in the channel as a "worker", not a thread.
+    // Filter it out of every thread-flavored list (sidebar, threads section,
+    // pinned chips). The bot session is reachable via the "Bot session →"
+    // header link.
+    const threadSessions = (sessions ?? []).filter((s) => !(s as any).isChannelBot)
+    const pinnedThreads = threadSessions.filter((s) => (s as any).pinned)
     const channelAny = channel as Channel & { botSessionId?: string | null }
 
     return (
@@ -165,28 +170,16 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
             </div>
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto app-scroll-y px-4 py-3 space-y-3">
-                {sessions && sessions.length > 0 && (
-                    <div className="space-y-2">
-                        <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--app-hint)' }}>
-                            Threads
-                        </div>
-                        {sessions.map((s) => (
-                            <ThreadCard
-                                key={s.id}
-                                data={{
-                                    status: s.threadStatus ?? (s.active ? 'active' : 'completed'),
-                                    taskTitle: s.threadTitle ?? s.metadata?.name ?? 'Session',
-                                    threadId: s.id,
-                                    startedBy: s.createdByUserId ?? '',
-                                    durationMs: s.active ? Date.now() - s.createdAt : (s.updatedAt - s.createdAt),
-                                }}
-                                kind="thread_card"
-                                onOpen={() => onOpenThread(s.id)}
-                            />
-                        ))}
-                    </div>
-                )}
-                {sortedMessages.length === 0 && (!sessions || sessions.length === 0) && (
+                {/*
+                  Stage 2: removed the duplicate "Threads" section that
+                  re-listed every active thread above the timeline. Thread
+                  cards already appear inline as `thread_card` channel
+                  messages (the canonical view), and the header has a
+                  pinned-threads chip strip for quick access. Listing them
+                  twice broke the visibility soft-private model — every
+                  channel member saw every thread, not just the creator.
+                */}
+                {sortedMessages.length === 0 && (
                     <div className="text-center py-8" style={{ color: 'var(--app-hint)' }}>
                         <p className="text-sm">No messages yet</p>
                         <p className="text-xs mt-1">Send a message or use @agent to start a task</p>
@@ -196,6 +189,7 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                     <ChannelMessageItem
                         key={msg.id}
                         message={msg}
+                        sessions={threadSessions}
                         onOpenThread={onOpenThread}
                         onReact={(emoji) => handleReact(msg.id, emoji)}
                     />
@@ -264,20 +258,33 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
 
 function ChannelMessageItem({
     message,
+    sessions,
     onOpenThread,
     onReact,
 }: {
     message: ChannelViewMessage
+    sessions: Session[]
     onOpenThread: (sessionId: string) => void
     onReact: (emoji: string) => void
 }) {
     const [showPicker, setShowPicker] = useState(false)
     if (message.kind === 'thread_card' || message.kind === 'agent_summary') {
         const cardData = (typeof message.body === 'string' ? tryParse(message.body) : message.body) as Record<string, unknown>
+        // Stage 2: thread_card body's `startedBy` is currently the bot session id.
+        // Resolve it to the thread's createdByUserId via the sessions snapshot
+        // so the card shows "by Alice" instead of "by 6982b16c-...".
+        const threadId = typeof cardData.threadId === 'string' ? (cardData.threadId as string) : null
+        const threadSession = threadId ? sessions.find((s) => s.id === threadId) : null
+        const friendlyStartedBy = threadSession
+            ? ((threadSession as Session & { createdByDisplayName?: string }).createdByDisplayName
+                ?? (threadSession as Session & { createdByUserId?: string }).createdByUserId
+                ?? null)
+            : null
+        const enrichedCard = friendlyStartedBy ? { ...cardData, startedBy: friendlyStartedBy } : cardData
         return (
             <div>
                 <ThreadCard
-                    data={cardData}
+                    data={enrichedCard}
                     kind={message.kind}
                     onOpen={() => {
                         if (message.threadSessionId) onOpenThread(message.threadSessionId)
@@ -293,9 +300,26 @@ function ChannelMessageItem({
         ? tryParseText(message.body)
         : (typeof bodyAny?.text === 'string' ? (bodyAny.text as string) : String(message.body))
     const fromBot = bodyAny && (bodyAny as { fromBot?: boolean }).fromBot === true
+    const botNameFromBody = (bodyAny as { botName?: string } | null | undefined)?.botName
+    // Stage 2: messages produced by a thread agent's `send_to_channel` look
+    // like `{text, fromBot:false, fromSession}` (no userId, no botName). Render
+    // them with thread-flavored attribution instead of falling through to
+    // "system" — that was confusing readers about who said what.
+    const fromSessionId = (bodyAny as { fromSession?: string } | null | undefined)?.fromSession
+    const fromThreadSession = !fromBot && fromSessionId
+        ? sessions.find((s) => s.id === fromSessionId)
+        : null
+    const isThreadEcho = !fromBot && !!fromThreadSession
+    const threadTitle = fromThreadSession?.threadTitle
+        ?? (fromThreadSession?.metadata && (fromThreadSession.metadata as { name?: string }).name)
+        ?? null
 
     const authorName = (message as Record<string, unknown>).authorDisplayName as string
-        ?? (fromBot ? 'Agent' : (message.authorUserId ?? 'system'))
+        ?? (fromBot
+            ? (botNameFromBody ?? 'Agent')
+            : isThreadEcho
+                ? `Thread${threadTitle ? `: ${threadTitle}` : ''}`
+                : (message.authorUserId ?? 'system'))
 
     return (
         <div className="flex gap-2 items-start group">
