@@ -60,7 +60,17 @@ export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlers
         if (session) {
             return { ok: true, value: session }
         }
-        if (store.sessions.getSession(sessionId)) {
+        // Stage 2: a channel-bound session (channel bot or thread) may have
+        // been spawned by an embedded/shared runner whose CLI namespace differs
+        // from the session's actual namespace (channel.namespace). Any
+        // CLI-authenticated socket may operate on these sessions — the channel
+        // is the access boundary, not the runner namespace. Without this,
+        // the runner that spawned the bot can't subscribe to its own session.
+        const crossNs = store.sessions.getSession(sessionId)
+        if (crossNs && (crossNs.isChannelBot || (typeof crossNs.channelId === 'string' && crossNs.channelId.length > 0))) {
+            return { ok: true, value: crossNs }
+        }
+        if (crossNs) {
             return { ok: false, reason: 'access-denied' }
         }
         return { ok: false, reason: 'not-found' }

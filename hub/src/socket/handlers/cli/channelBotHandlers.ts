@@ -32,13 +32,27 @@ export function registerChannelBotHandlers(socket: CliSocketWithData, deps: Chan
         on: (event: string, cb: (...args: any[]) => void) => void
     }
 
-    /** Resolve the bot session + its channelId. Returns error message if invalid. */
+    /** Resolve the bot/thread session + the *channel's* namespace.
+     *
+     * Stage 2: bot and thread sessions live in the channel's namespace, but
+     * the runner that hosts them auths with its own namespace (often
+     * 'default' for the embedded runner). So we look up the session
+     * cross-namespace by id, then derive the actual channel namespace from
+     * the channel row — never from the socket — so the engine operations
+     * below find the right channel.
+     */
     function resolveChannelContext(sid: string): { ok: true; channelId: string; namespace: string; isBot: boolean } | { ok: false; error: string } {
         if (!namespace) return { ok: false, error: 'No namespace on socket' }
-        const session = store.sessions.getSessionByNamespace(sid, namespace)
-        if (!session) return { ok: false, error: `Session ${sid} not found in namespace ${namespace}` }
+        const session = store.sessions.getSession(sid)
+        if (!session) return { ok: false, error: `Session ${sid} not found` }
         if (!session.channelId) return { ok: false, error: `Session ${sid} is not associated with a channel` }
-        return { ok: true, channelId: session.channelId, namespace, isBot: session.isChannelBot }
+        // Use channel's actual namespace, not the socket's. The session row
+        // already lives in channel.namespace after the cli.ts remap, but
+        // re-deriving here keeps the handlers robust if that invariant ever
+        // drifts.
+        const channel = store.channels.getChannelById(session.channelId)
+        if (!channel) return { ok: false, error: `Channel ${session.channelId} not found` }
+        return { ok: true, channelId: channel.id, namespace: channel.namespace, isBot: session.isChannelBot }
     }
 
     function ensureBotOnly(sid: string): { ok: true; channelId: string; namespace: string } | { ok: false; error: string } {
@@ -59,14 +73,21 @@ export function registerChannelBotHandlers(socket: CliSocketWithData, deps: Chan
             if (!ctx.ok) return ack({ ok: false, error: ctx.error })
             const engine = getSyncEngine()
             if (!engine) return ack({ ok: false, error: 'SyncEngine unavailable' })
-            // For bots: authorUserId=null + body includes botName tag (rendered as bot)
-            // For threads: authorUserId=null but kind=text — UI renders generically
+            // Stage 2: include botName so the web UI renders "Lumi" instead of
+            // a generic "Agent". The body is opaque JSON to the store; this
+            // just stamps a hint the UI can consult.
+            let botName: string | null = null
+            if (ctx.isBot) {
+                const channel = store.channels.getChannelById(ctx.channelId)
+                const cfg = (channel?.agentConfig ?? null) as { botName?: string } | null
+                botName = cfg?.botName ?? 'Agent'
+            }
             const message = engine.sendChannelMessage(
                 ctx.channelId,
                 ctx.namespace,
                 null,
                 'text',
-                { text: payload.text, fromSession: payload.sid, fromBot: ctx.isBot },
+                { text: payload.text, fromSession: payload.sid, fromBot: ctx.isBot, botName },
                 payload.sid
             )
             ack({ ok: true, data: { messageId: message.id, seq: message.seq } })

@@ -12,6 +12,7 @@ function createStoreSyncAdapter(store: Store) {
     return {
         getChannelsForUser: (ns: string, userId: string) => store.channels.getChannelsForUser(ns, userId),
         getChannel: (id: string, ns: string) => store.channels.getChannel(id, ns),
+        getChannelById: (id: string) => store.channels.getChannelById(id),
         isChannelMember: (id: string, userId: string) => store.channels.isMember(id, userId),
         isPersonalChannel: (id: string) => store.workspaceUsers.isPersonalChannel(id),
         createChannel: (ns: string, name: string, createdBy: string, desc?: string, agentConfig?: unknown) =>
@@ -352,13 +353,16 @@ describe('channels server E2E (real HTTP)', () => {
     })
 
     // ------------------------------------------------------------------
-    // 4. Namespace isolation via JWT
+    // 4. Membership-based isolation (Stage 2: cross-namespace by membership)
     // ------------------------------------------------------------------
-    describe('namespace isolation', () => {
-        it('channel created in one namespace is invisible from another', async () => {
-            const otherNsToken = await getToken(1, 'other-ns')
+    describe('membership isolation', () => {
+        it('channel is invisible to a different user who has not joined', async () => {
+            // Stage 2 changed the access model from "namespace match" to
+            // "channel-membership match". A different user (different uid)
+            // who has not been invited cannot see the channel — even if
+            // they share a namespace, even more so when they don't.
+            const strangerToken = await getToken(99, 'other-ns')
 
-            // Create channel in test-ns
             const createRes = await fetch(`${baseUrl}/api/channels`, {
                 method: 'POST',
                 headers: authHeaders(aliceToken),
@@ -366,18 +370,18 @@ describe('channels server E2E (real HTTP)', () => {
             })
             const { channel } = await createRes.json() as any
 
-            // Same user id but different namespace cannot see it
+            // Stranger gets 403 (channel exists, not a member) on direct fetch
             const crossRes = await fetch(`${baseUrl}/api/channels/${channel.id}`, {
-                headers: authHeaders(otherNsToken)
+                headers: authHeaders(strangerToken)
             })
-            expect(crossRes.status).toBe(404)
+            expect(crossRes.status).toBe(403)
 
-            // Channel list in other namespace is empty
+            // Channel list for the stranger does not include this channel
             const listRes = await fetch(`${baseUrl}/api/channels`, {
-                headers: authHeaders(otherNsToken)
+                headers: authHeaders(strangerToken)
             })
             const { channels } = await listRes.json() as any
-            expect(channels).toHaveLength(0)
+            expect(channels.find((ch: any) => ch.id === channel.id)).toBeUndefined()
 
             // Cleanup
             await fetch(`${baseUrl}/api/channels/${channel.id}`, {

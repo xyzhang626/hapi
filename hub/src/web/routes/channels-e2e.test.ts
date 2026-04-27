@@ -867,16 +867,20 @@ describe('channels E2E', () => {
             expect(cross.status).toBe(404)
         })
 
-        it('namespace isolation: channels list returns only matching namespace', async () => {
+        it('membership isolation: channels list excludes channels you have not joined', async () => {
+            // Stage 2: visibility moved from "namespace match" to
+            // "channel-membership match". A different user (different uid)
+            // who hasn't joined this channel must not see it, even if they
+            // share a namespace.
             const { app } = createTestEnv('alice')
 
             await jsonRequest(app, 'POST', '/api/channels', { name: 'ns-test' })
 
-            const otherNs = await app.request('/api/channels', {
-                headers: { 'x-test-namespace': 'other', 'x-test-user-id': 'alice' }
+            const stranger = await app.request('/api/channels', {
+                headers: { 'x-test-namespace': 'other', 'x-test-user-id': 'stranger' }
             })
-            const { channels } = await otherNs.json() as any
-            expect(channels).toHaveLength(0)
+            const { channels } = await stranger.json() as any
+            expect(channels.find((ch: any) => ch.name === 'ns-test')).toBeUndefined()
         })
 
         it('non-member cannot add members', async () => {

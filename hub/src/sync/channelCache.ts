@@ -37,9 +37,13 @@ export class ChannelCache {
     }
 
     getChannelsForUser(namespace: string, userId: string): StoredChannel[] {
+        // Stage 2: cross-namespace by membership. Bob in ns=bob who joined
+        // Alice's #engineering (ns=alice) needs to see that channel; the
+        // earlier `channel.namespace !== namespace` filter dropped invited
+        // members. Membership is the authoritative gate.
+        void namespace
         const result: StoredChannel[] = []
         for (const channel of this.channels.values()) {
-            if (channel.namespace !== namespace) continue
             const members = this.membership.get(channel.id)
             if (members?.has(userId)) {
                 result.push(channel)
@@ -55,6 +59,10 @@ export class ChannelCache {
 
     getMembers(channelId: string): StoredChannelMember[] {
         return this.store.channels.getMembers(channelId)
+    }
+
+    getMemberUserIds(channelId: string): string[] {
+        return this.getMembers(channelId).map((m) => m.userId)
     }
 
     addChannel(channel: StoredChannel): void {

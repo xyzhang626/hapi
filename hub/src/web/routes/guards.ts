@@ -21,15 +21,33 @@ export function requireSession(
 ): { sessionId: string; session: Session } | Response {
     const namespace = c.get('namespace')
     const access = engine.resolveSessionAccess(sessionId, namespace)
-    if (!access.ok) {
-        const status = access.reason === 'access-denied' ? 403 : 404
-        const error = access.reason === 'access-denied' ? 'Session access denied' : 'Session not found'
-        return c.json({ error }, status)
+    if (access.ok) {
+        if (options?.requireActive && !access.session.active) {
+            return c.json({ error: 'Session is inactive' }, 409)
+        }
+        return { sessionId: access.sessionId, session: access.session }
     }
-    if (options?.requireActive && !access.session.active) {
-        return c.json({ error: 'Session is inactive' }, 409)
+    if (access.reason === 'access-denied') {
+        // Stage 2: channel-bound sessions (bot session, threads) live in
+        // channel.namespace. Channel members in *other* namespaces should
+        // still see them — bot sessions are read-only across the whole
+        // channel ("View only — interact in #channel"), and threads are
+        // soft-private (any channel member can open, just visibility/UI
+        // differs). Match by channel membership instead of namespace.
+        const cross = engine.getSession(sessionId)
+        if (cross && (cross.isChannelBot || (typeof cross.channelId === 'string' && cross.channelId.length > 0))) {
+            const userId = String(c.get('userId') ?? '')
+            if (userId && cross.channelId && engine.isChannelMember(cross.channelId, userId)) {
+                if (options?.requireActive && !cross.active) {
+                    return c.json({ error: 'Session is inactive' }, 409)
+                }
+                return { sessionId, session: cross }
+            }
+        }
     }
-    return { sessionId: access.sessionId, session: access.session }
+    const status = access.reason === 'access-denied' ? 403 : 404
+    const error = access.reason === 'access-denied' ? 'Session access denied' : 'Session not found'
+    return c.json({ error }, status)
 }
 
 export function requireSessionFromParam(

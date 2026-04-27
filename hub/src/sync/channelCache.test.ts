@@ -97,7 +97,7 @@ describe('ChannelCache', () => {
             expect(cache.getChannelsForUser('ns1', 'user-3')).toHaveLength(0)
         })
 
-        it('filters by namespace', () => {
+        it('returns membership-matching channels regardless of namespace (Stage 2 cross-namespace)', () => {
             const { store, cache } = createTestCache()
             const ch1 = store.channels.createChannel('ns1', 'ch1', 'user-1')
             store.channels.addMember(ch1.id, 'user-1', 'owner')
@@ -105,8 +105,10 @@ describe('ChannelCache', () => {
             store.channels.addMember(ch2.id, 'user-1', 'owner')
             cache.reloadAll()
 
-            expect(cache.getChannelsForUser('ns1', 'user-1')).toHaveLength(1)
-            expect(cache.getChannelsForUser('ns2', 'user-1')).toHaveLength(1)
+            // Stage 2: visibility is membership-based, not namespace-match.
+            // user-1 is a member of both channels, so both lists return both.
+            expect(cache.getChannelsForUser('ns1', 'user-1')).toHaveLength(2)
+            expect(cache.getChannelsForUser('ns2', 'user-1')).toHaveLength(2)
         })
     })
 
