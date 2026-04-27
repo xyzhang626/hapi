@@ -84,13 +84,18 @@ export class ChannelCache {
     }
 
     removeChannel(channelId: string, namespace: string): void {
-        this.channels.delete(channelId)
-        this.membership.delete(channelId)
+        // Emit BEFORE wiping local state so the SSE membership filter still
+        // recognizes connected users as members of this channel and delivers
+        // the channel-removed event. Otherwise sseManager's channel-membership
+        // gate (sseManager.ts) will drop the event for the very users who
+        // most need to see it.
         this.publisher.emit({
             type: 'channel-removed',
             channelId,
             namespace
         })
+        this.channels.delete(channelId)
+        this.membership.delete(channelId)
     }
 
     addMember(channelId: string, userId: string, namespace: string): void {
