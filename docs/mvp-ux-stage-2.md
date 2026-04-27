@@ -497,42 +497,36 @@ Hub 用 `sessionId` 反查 `session.metadata.channelId`,所有操作隐式作用
 
 ---
 
-## 实施完成后还欠的尾巴 (deferred from initial implementation)
+## 实施完成后还欠的尾巴 (deferred — now resolved)
 
-下面这些是 8 个阶段 (commits `f341abd`–`d9805ca`) 落地后**故意留给后续 PR** 的尾巴 — 都不阻塞主流程跑通,但为了完整性需要补齐:
+下面这些 6 个尾巴在 8 个阶段 (commits `f341abd`–`d9805ca`) 落地后被推迟,
+后续 commits `27f073c`–`e1f4633` 将它们全部补齐 + 对每一项跑了
+codex-exec / opus subagent 双重审计 + 用 playwright-cli 或 bash 脚本做了
+端到端验证。
 
-### 1. AgentConfigEditor (web UI)
+| # | 项目 | 落地 commit | 验证 |
+| --- | --- | --- | --- |
+| 1 | AgentConfigEditor (web UI) | `a3012ec` + `8a47794` (修复 spawn-on-add) | playwright 跑过编辑流程;owner-only 由 e2e 测试覆盖 |
+| 2 | SSE 实时推送 (reactions / pin / typing) | `27f073c` + `010f039` + `1721ce7` | bash smoke 验证全部事件 fire,带 channelId 字段 |
+| 3 | 一站式 integration E2E 测试 | `6c198a1` + `e1f4633` | `hub/test/smoke-stage-2.sh` 22/22 通过 |
+| 4 | Bot crash recovery 端到端验证 | `52b8e8f` + `9d77804` | `hub/test/smoke-bot-recovery.sh` real-hub 验证 + 4 个单元测试 |
+| 5 | "+ New thread" 端到端流程 | `19f922f` + `f6e4f11` (audit fixes) | bash smoke + 2 个 ChannelAgent 单元测试 |
+| 6 | Strong signal thread state 粒度 | `f6e4f11` | 5 个新单元测试 (completed dedup / archived / 10s stall debounce / flap cancel / injection sanitization) |
 
-后端已就绪 (`PUT /api/channels/:id` 带 agentConfig 会写文件;`AgentConfigStore` 自动 hot-reload + 注入 `__config_updated` 给 bot)。**缺的是**前端的 schema-driven form 抽屉:
-- 入口: channel header 加一个 "Channel settings" 按钮 (仅 owner 可见)
-- 字段分组 (Identity / Behavior / Permissions / Advanced),用 Zod schema → form 渲染
-- Save 调 `api.updateChannelAgentConfig(channelId, agentConfig)`
-- 文件: `web/src/components/AgentConfigEditor.tsx` (新)
+审计阶段还顺带修复了 5 个未发现的 pre-existing bug:
 
-### 2. SSE 实时推送的新事件订阅 (web UI)
-
-后端已正确 emit 这些事件 (Phase B/D),但 `web/src/hooks/useSSE.ts` 还没加对应的 handler:
-- `message-reaction-added` / `message-reaction-removed` → 现在靠 `channel-message-received` invalidation 顺带刷新,**实时性差** (要等下一条消息才看到 reaction 变化)
-- `thread-pinned` / `thread-unpinned` / `thread-visibility-changed` → 改完不会立即在 sidebar/header 更新
-- `channel-bot-typing` → 通往 `ChannelView` 的 `botTypingAction` prop 还没接通,bot 思考时输入框上方的 typing-indicator 永远空着
-
-修复时只需要在 `useSSE.ts` 里把这几个事件 dispatch 到对应 query key 的 `invalidateQueries` / `setQueryData`。
-
-### 3. 一站式 integration E2E 测试
-
-`docs/mvp-ux-stage-2.md` § Verification 里的"manual end-to-end"是当前唯一的端到端验证。一个真正的自动化集成测试 (create channel → bot 真的 spawn → @mention → bot 真的 reply + spawn thread → reaction → soft delete) 需要在测试 fixture 里跑一个 live runner 进程,这超出 bun in-memory test 的能力。可选方向:
-- 用 playwright + 已经在 `.playwright/` 里配好的 browser harness 编写一个 spec
-- 或写一个 shell 脚本 `scripts/smoke-stage-2.sh` 顺序调真 hub + runner + curl
-
-### 4. Bot crash recovery 的真实端到端验证
-
-`engine.handleSessionEnd` 里加了 watchdog (Phase A,5 秒后用 `resumeSessionId` 重 spawn),代码逻辑对,但**没有在线测试过** kill PID 后 hub 是否真的复活并保留对话上下文。手动测试步骤已记录在 design doc 的 Verification 段第 12 步。
-
-### 5. 用户点 "+ New thread" 按钮的端到端流程
-
-设计是: button 不直接创建 thread,而是后台发一条 `<system>user-requested-new-thread</system>` 强信号给 bot,bot 决定怎么 spawn。**后端已经支持**(任何强信号都会进 bot),但 web UI 上的 "+ New thread" 按钮以及对应的 backend 路由 (`POST /channels/:id/thread-request` 或类似) 还没实现。
-
-### 6. Strong signal 中的 thread state 区分粒度
-
-当前 ChannelAgent 在任何 `session.active=false` 的 session-updated 事件上都向 bot 推 `thread-completed` 强信号。**应该**进一步区分 `completed` / `failed` / `archived`,以及避免在 thread 还在跑只是短暂离线时误报。当前实现可能产生噪音。
+- `sessionCache.refreshSession` 漏掉 stage-2 字段 (`isChannelBot` 等),
+  导致 `channel-bot-typing` emitter 永远 early-return (`010f039`)
+- SSE membership filter 没把新 stage-2 事件包含在 channel-* 集合里,
+  导致 namespace-wide 泄漏 (`010f039`)
+- `cli.ts` POST `/sessions` 路由不把 metadata 里的 `isChannelBot` /
+  `channelId` 提升到顶层列,导致 watchdog 永远不触发 (`1721ce7`)
+- `apiMachine.ts` spawn-happy-session handler 只解构 core fields,
+  把 channel-bot extras 全部丢弃,导致 spawned CLI 永远没有
+  `HAPI_IS_CHANNEL_BOT` env (`9d77804`)
+- `channelCache.removeChannel` 在 emit 之前就清空 membership,
+  导致 SSE filter 把 `channel-removed` 事件 drop 掉 (`6c198a1`)
+- `deleteChannel` 用 namespace-scoped helper 找 sessions,
+  错过 embedded-runner 的 'default' namespace bot session,
+  FK constraint 失败 → soft delete 500 (`e1f4633`)
 
