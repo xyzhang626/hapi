@@ -273,6 +273,28 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         return c.json({ session }, 201)
     })
 
+    // POST /channels/:id/thread-request — Stage 2: user clicked "+ New thread".
+    // Doesn't create a thread directly; emits a strong-signal event that
+    // ChannelAgent forwards to the bot session, which is in charge of
+    // actually calling spawn_thread via MCP.
+    app.post('/channels/:id/thread-request', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const namespace = c.get('namespace')
+        const userId = String(c.get('userId'))
+        const channelId = c.req.param('id')
+        const channel = engine.getChannel(channelId, namespace)
+        if (!channel) return c.json({ error: 'Channel not found' }, 404)
+        if (!engine.isChannelMember(channelId, userId)) return c.json({ error: 'Not a member of this channel' }, 403)
+        const body = await parseBody<{ topic?: string }>(c)
+        const topic = typeof body?.topic === 'string' ? body.topic.trim() : ''
+        if (!topic) {
+            return c.json({ error: 'topic is required' }, 400)
+        }
+        engine.requestNewThread(channelId, namespace, userId, topic)
+        return c.json({ ok: true })
+    })
+
     // POST /channels/:id/invite — create invite link
     app.post('/channels/:id/invite', (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)

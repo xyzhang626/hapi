@@ -27,6 +27,7 @@ type ChannelViewMessage = ChannelMessage & {
 export function ChannelView({ api, channel, messages, sessions, onOpenThread, onRefresh, botTypingAction }: ChannelViewProps) {
     const { userId } = useAppContext()
     const [showSettings, setShowSettings] = useState(false)
+    const [requestingThread, setRequestingThread] = useState(false)
     const isOwner = userId != null && channel.createdBy === userId
     const [input, setInput] = useState('')
     const [sending, setSending] = useState(false)
@@ -61,6 +62,23 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
             onRefresh()
         } catch (err) {
             console.error('toggleMessageReaction failed:', err)
+        }
+    }
+
+    const handleNewThreadClick = async () => {
+        if (requestingThread) return
+        const topic = window.prompt('What should the new thread be about?')
+        if (!topic || !topic.trim()) return
+        setRequestingThread(true)
+        try {
+            await api.requestNewThread(channel.id, topic.trim())
+            // Bot will pick up the strong signal and call spawn_thread via MCP.
+            // The new thread will appear via SSE channel-message-received +
+            // channelSessions invalidation; no explicit refresh needed.
+        } catch (err) {
+            console.error('requestNewThread failed:', err)
+        } finally {
+            setRequestingThread(false)
         }
     }
 
@@ -110,6 +128,19 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                             title={isOwner ? 'Edit channel agent settings' : 'View channel agent settings (owner-only edits)'}
                         >
                             ⚙ Settings
+                        </button>
+                        <button
+                            onClick={handleNewThreadClick}
+                            disabled={!channelAny.botSessionId || requestingThread}
+                            className="text-xs px-2 py-1 rounded-full"
+                            style={{
+                                background: 'var(--app-button)',
+                                color: 'var(--app-button-text)',
+                                opacity: !channelAny.botSessionId || requestingThread ? 0.5 : 1,
+                            }}
+                            title={channelAny.botSessionId ? 'Ask the bot to spawn a new thread on a topic' : 'Channel has no bot — add one in Settings first'}
+                        >
+                            + New thread
                         </button>
                     </div>
                 </div>

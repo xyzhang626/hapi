@@ -207,4 +207,41 @@ describe('ChannelAgent (Stage 2 router)', () => {
         await new Promise((r) => setTimeout(r, 10))
         expect(engine.sendCalls).toHaveLength(0)
     })
+
+    it('channel-thread-requested forwards a strong signal to the bot session', async () => {
+        const engine = makeEngine()
+        agent = new ChannelAgent(engine as any)
+        engine.fire({
+            type: 'channel-thread-requested',
+            channelId: 'channel-1',
+            namespace: 'ns1',
+            userId: 'user-42',
+            topic: 'fix login regression on safari'
+        } as SyncEvent)
+        await new Promise((r) => setTimeout(r, 10))
+        expect(engine.sendCalls).toHaveLength(1)
+        expect(engine.sendCalls[0].sid).toBe('bot-session-1')
+        const text = engine.sendCalls[0].text
+        expect(text).toContain('user-requested-new-thread')
+        expect(text).toContain('user-42')
+        expect(text).toContain('fix login regression on safari')
+    })
+
+    it('channel-thread-requested without a bot is silently dropped', async () => {
+        const engine = makeEngine()
+        engine.getChannel = () => ({
+            id: 'channel-1', namespace: 'ns1', name: 'eng',
+            description: null, agentConfig: null,
+            createdBy: 'u', createdAt: 0, updatedAt: 0, nextSeq: 1,
+            botSessionId: null
+        })
+        agent = new ChannelAgent(engine as any)
+        engine.fire({
+            type: 'channel-thread-requested',
+            channelId: 'channel-1', namespace: 'ns1',
+            userId: 'user-42', topic: 'whatever'
+        } as SyncEvent)
+        await new Promise((r) => setTimeout(r, 10))
+        expect(engine.sendCalls).toHaveLength(0)
+    })
 })

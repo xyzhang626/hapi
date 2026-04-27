@@ -391,6 +391,14 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         type: z.literal('channel-bot-typing'),
         sessionId: z.string(),
         action: z.string().nullable()
+    }),
+    // Stage 2: user clicked "+ New thread". This is a strong signal for
+    // the channel bot — it's expected to call spawn_thread (or similar)
+    // in response. Routed via ChannelAgent like @mentions.
+    ChannelChangedSchema.extend({
+        type: z.literal('channel-thread-requested'),
+        userId: z.string(),
+        topic: z.string()
     })
 ])
 

@@ -557,6 +557,19 @@ export class ApiClient {
         })
     }
 
+    /**
+     * Stage 2: signal "+ New thread" intent. Hub emits a strong signal
+     * that the channel bot picks up; the bot then calls spawn_thread
+     * (or similar) via MCP. The actual thread title/flavor are the
+     * bot's call.
+     */
+    async requestNewThread(channelId: string, topic: string): Promise<{ ok: true }> {
+        return await this.request(`/api/channels/${encodeURIComponent(channelId)}/thread-request`, {
+            method: 'POST',
+            body: JSON.stringify({ topic })
+        })
+    }
+
     async getChannelSessions(channelId: string): Promise<ChannelSessionsResponse> {
         return await this.request(`/api/channels/${encodeURIComponent(channelId)}/sessions`)
     }

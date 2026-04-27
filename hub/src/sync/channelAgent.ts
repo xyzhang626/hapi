@@ -61,7 +61,24 @@ export class ChannelAgent {
             this.handleChannelMessage(event)
         } else if (event.type === 'session-updated') {
             this.handleSessionUpdate(event)
+        } else if (event.type === 'channel-thread-requested') {
+            this.handleThreadRequested(event)
         }
+    }
+
+    private handleThreadRequested(event: Extract<SyncEvent, { type: 'channel-thread-requested' }>): void {
+        const namespace = event.namespace ?? ''
+        if (!namespace) return
+        const ctx = this.getChannelContext(event.channelId, namespace)
+        if (!ctx) return
+        // Flush pending weak buffer first to preserve ordering before this
+        // strong signal lands in the bot session.
+        this.flushWeakBuffer(event.channelId, namespace, ctx)
+        const safeTopic = event.topic.replace(/\n/g, ' ').slice(0, 500)
+        const wrapped = `<system>user-requested-new-thread: { userId: "${event.userId}", topic: ${JSON.stringify(safeTopic)} }</system>\n${safeTopic}`
+        void this.engine.sendMessage(ctx.botSessionId, { text: wrapped, sentFrom: 'webapp' }).catch((err) => {
+            console.error('[ChannelAgent] forward thread-requested failed:', err)
+        })
     }
 
     /** Look up bot session id + name for a channel; cached. */

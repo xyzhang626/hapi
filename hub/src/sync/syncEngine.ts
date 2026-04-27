@@ -927,6 +927,25 @@ export class SyncEngine {
         return ok
     }
 
+    /**
+     * Stage 2: a real user clicked "+ New thread" in the channel UI.
+     * Emit a strong-signal event that ChannelAgent will route to the bot
+     * session, which is then expected to call spawn_thread via MCP.
+     *
+     * The web POSTs to /channels/:id/thread-request with { topic } — the
+     * topic seeds the bot's reasoning. We never spawn a thread directly
+     * here; the bot is in charge of choosing title/flavor/visibility.
+     */
+    requestNewThread(channelId: string, namespace: string, userId: string, topic: string): void {
+        this.eventPublisher.emit({
+            type: 'channel-thread-requested',
+            channelId,
+            namespace,
+            userId,
+            topic
+        } as SyncEvent)
+    }
+
     setThreadVisibility(sessionId: string, namespace: string, visibility: 'private' | 'shared'): boolean {
         const ok = this.store.sessions.setThreadVisibility(sessionId, namespace, visibility)
         if (ok) {
