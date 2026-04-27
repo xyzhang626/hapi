@@ -494,3 +494,45 @@ Hub 用 `sessionId` 反查 `session.metadata.channelId`,所有操作隐式作用
 - 逐人邀请 thread (除了 share-to-all 之外的精细 ACL)
 - Thread 跨 channel 移动
 - Bot 接受用户 reaction 作为强信号
+
+---
+
+## 实施完成后还欠的尾巴 (deferred from initial implementation)
+
+下面这些是 8 个阶段 (commits `f341abd`–`d9805ca`) 落地后**故意留给后续 PR** 的尾巴 — 都不阻塞主流程跑通,但为了完整性需要补齐:
+
+### 1. AgentConfigEditor (web UI)
+
+后端已就绪 (`PUT /api/channels/:id` 带 agentConfig 会写文件;`AgentConfigStore` 自动 hot-reload + 注入 `__config_updated` 给 bot)。**缺的是**前端的 schema-driven form 抽屉:
+- 入口: channel header 加一个 "Channel settings" 按钮 (仅 owner 可见)
+- 字段分组 (Identity / Behavior / Permissions / Advanced),用 Zod schema → form 渲染
+- Save 调 `api.updateChannelAgentConfig(channelId, agentConfig)`
+- 文件: `web/src/components/AgentConfigEditor.tsx` (新)
+
+### 2. SSE 实时推送的新事件订阅 (web UI)
+
+后端已正确 emit 这些事件 (Phase B/D),但 `web/src/hooks/useSSE.ts` 还没加对应的 handler:
+- `message-reaction-added` / `message-reaction-removed` → 现在靠 `channel-message-received` invalidation 顺带刷新,**实时性差** (要等下一条消息才看到 reaction 变化)
+- `thread-pinned` / `thread-unpinned` / `thread-visibility-changed` → 改完不会立即在 sidebar/header 更新
+- `channel-bot-typing` → 通往 `ChannelView` 的 `botTypingAction` prop 还没接通,bot 思考时输入框上方的 typing-indicator 永远空着
+
+修复时只需要在 `useSSE.ts` 里把这几个事件 dispatch 到对应 query key 的 `invalidateQueries` / `setQueryData`。
+
+### 3. 一站式 integration E2E 测试
+
+`docs/mvp-ux-stage-2.md` § Verification 里的"manual end-to-end"是当前唯一的端到端验证。一个真正的自动化集成测试 (create channel → bot 真的 spawn → @mention → bot 真的 reply + spawn thread → reaction → soft delete) 需要在测试 fixture 里跑一个 live runner 进程,这超出 bun in-memory test 的能力。可选方向:
+- 用 playwright + 已经在 `.playwright/` 里配好的 browser harness 编写一个 spec
+- 或写一个 shell 脚本 `scripts/smoke-stage-2.sh` 顺序调真 hub + runner + curl
+
+### 4. Bot crash recovery 的真实端到端验证
+
+`engine.handleSessionEnd` 里加了 watchdog (Phase A,5 秒后用 `resumeSessionId` 重 spawn),代码逻辑对,但**没有在线测试过** kill PID 后 hub 是否真的复活并保留对话上下文。手动测试步骤已记录在 design doc 的 Verification 段第 12 步。
+
+### 5. 用户点 "+ New thread" 按钮的端到端流程
+
+设计是: button 不直接创建 thread,而是后台发一条 `<system>user-requested-new-thread</system>` 强信号给 bot,bot 决定怎么 spawn。**后端已经支持**(任何强信号都会进 bot),但 web UI 上的 "+ New thread" 按钮以及对应的 backend 路由 (`POST /channels/:id/thread-request` 或类似) 还没实现。
+
+### 6. Strong signal 中的 thread state 区分粒度
+
+当前 ChannelAgent 在任何 `session.active=false` 的 session-updated 事件上都向 bot 推 `thread-completed` 强信号。**应该**进一步区分 `completed` / `failed` / `archived`,以及避免在 thread 还在跑只是短暂离线时误报。当前实现可能产生噪音。
+
