@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useId, useMemo, useRef, useState } from 'react'
 import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
@@ -80,6 +80,42 @@ export function SessionHeader(props: {
     const [renameOpen, setRenameOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
     const [deleteOpen, setDeleteOpen] = useState(false)
+    const [pinError, setPinError] = useState<string | null>(null)
+
+    // Stage 2: surface pin / share actions for threads (sessions attached to a
+    // channel that aren't the bot session itself). Server enforces channel-owner
+    // (pin) and thread-creator (share) gates; UI shows the buttons to all
+    // members of the menu and reflects 403s as a small toast.
+    const sessionAny = session as Session & {
+        isChannelBot?: boolean
+        pinned?: boolean
+        visibility?: 'private' | 'shared'
+    }
+    const isChannelThread = !!session.channelId && !sessionAny.isChannelBot
+    const pinned = sessionAny.pinned === true
+    const shared = sessionAny.visibility === 'shared'
+
+    const handleTogglePin = useCallback(async () => {
+        if (!api) return
+        setPinError(null)
+        try {
+            await api.setThreadPinned(session.id, !pinned)
+        } catch (err) {
+            setPinError(err instanceof Error ? err.message : 'Pin failed')
+            setTimeout(() => setPinError(null), 4000)
+        }
+    }, [api, pinned, session.id])
+
+    const handleToggleShare = useCallback(async () => {
+        if (!api) return
+        setPinError(null)
+        try {
+            await api.setThreadVisibility(session.id, shared ? 'private' : 'shared')
+        } catch (err) {
+            setPinError(err instanceof Error ? err.message : 'Visibility change failed')
+            setTimeout(() => setPinError(null), 4000)
+        }
+    }, [api, shared, session.id])
 
     const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
         api,
@@ -177,6 +213,9 @@ export function SessionHeader(props: {
                     </button>
                 </div>
             </div>
+            {pinError && (
+                <div className="px-4 pb-2 text-xs text-red-500">{pinError}</div>
+            )}
 
             <SessionActionMenu
                 isOpen={menuOpen}
@@ -187,6 +226,10 @@ export function SessionHeader(props: {
                 onDelete={() => setDeleteOpen(true)}
                 anchorPoint={menuAnchorPoint}
                 menuId={menuId}
+                pinned={isChannelThread ? pinned : undefined}
+                onTogglePin={isChannelThread ? handleTogglePin : undefined}
+                shared={isChannelThread ? shared : undefined}
+                onToggleShare={isChannelThread ? handleToggleShare : undefined}
             />
 
             <RenameSessionDialog

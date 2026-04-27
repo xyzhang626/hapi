@@ -31,6 +31,8 @@ type AgentConfigEditorProps = {
     onClose: () => void
     onSaved: (config: AgentConfig) => void
     canEdit: boolean
+    /** Called after the user confirms a soft or hard delete. Lets the parent navigate away. */
+    onDeleted?: () => void
 }
 
 /**
@@ -40,10 +42,20 @@ type AgentConfigEditorProps = {
  * blob, which the hub mirrors to the on-disk JSON and hot-reloads.
  */
 export function AgentConfigEditor(props: AgentConfigEditorProps) {
-    const { api, channelId, initialConfig, onClose, onSaved, canEdit } = props
+    const { api, channelId, initialConfig, onClose, onSaved, canEdit, onDeleted } = props
     const [draft, setDraft] = useState<AgentConfig>(() => normalize(initialConfig))
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    // Members / invite flow
+    const [invite, setInvite] = useState<{ id: string; expiresAt: number } | null>(null)
+    const [creatingInvite, setCreatingInvite] = useState(false)
+    const [inviteError, setInviteError] = useState<string | null>(null)
+    const [copied, setCopied] = useState(false)
+    // Danger zone
+    const [hardDelete, setHardDelete] = useState(false)
+    const [confirmingDelete, setConfirmingDelete] = useState(false)
+    const [deleting, setDeleting] = useState(false)
+    const [deleteError, setDeleteError] = useState<string | null>(null)
 
     useEffect(() => {
         setDraft(normalize(initialConfig))
@@ -76,6 +88,50 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
 
     const update = <K extends keyof AgentConfig>(key: K, value: AgentConfig[K]) => {
         setDraft((prev) => ({ ...prev, [key]: value }))
+    }
+
+    const inviteUrl = useMemo(() => {
+        if (!invite) return ''
+        return `${window.location.origin}/invite/${invite.id}`
+    }, [invite])
+
+    const handleGenerateInvite = async () => {
+        setCreatingInvite(true)
+        setInviteError(null)
+        setCopied(false)
+        try {
+            const r = await api.createChannelInvite(channelId)
+            setInvite(r.invite)
+        } catch (err) {
+            setInviteError(err instanceof Error ? err.message : 'Failed to generate invite')
+        } finally {
+            setCreatingInvite(false)
+        }
+    }
+
+    const handleCopyInvite = async () => {
+        if (!inviteUrl) return
+        try {
+            await navigator.clipboard.writeText(inviteUrl)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+        } catch {
+            setInviteError('Clipboard write failed — copy the link manually')
+        }
+    }
+
+    const handleConfirmDelete = async () => {
+        setDeleting(true)
+        setDeleteError(null)
+        try {
+            await api.deleteChannel(channelId, { hard: hardDelete })
+            onDeleted?.()
+            onClose()
+        } catch (err) {
+            setDeleteError(err instanceof Error ? err.message : 'Failed to delete channel')
+        } finally {
+            setDeleting(false)
+        }
     }
 
     return (
@@ -199,6 +255,66 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
                             />
                         </Field>
                     </Section>
+
+                    <Section title="Members" hint="Invite anyone with the link to join this channel">
+                        <Field label="Invite link" hint="One-shot link, expires in ~7 days. Anyone signed in to a hub can use it to join.">
+                            {invite ? (
+                                <div className="flex flex-col gap-2">
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            readOnly
+                                            value={inviteUrl}
+                                            onClick={(e) => (e.target as HTMLInputElement).select()}
+                                            className="form-input"
+                                        />
+                                        <Button type="button" variant="secondary" onClick={handleCopyInvite}>
+                                            {copied ? 'Copied!' : 'Copy'}
+                                        </Button>
+                                    </div>
+                                    <div className="text-xs" style={{ color: 'var(--app-hint)' }}>
+                                        Expires {new Date(invite.expiresAt).toLocaleString()}
+                                    </div>
+                                </div>
+                            ) : (
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    disabled={creatingInvite}
+                                    onClick={handleGenerateInvite}
+                                >
+                                    {creatingInvite ? 'Generating…' : 'Generate invite link'}
+                                </Button>
+                            )}
+                            {inviteError && (
+                                <div className="mt-2 text-xs text-red-500">{inviteError}</div>
+                            )}
+                        </Field>
+                    </Section>
+
+                    {canEdit && (
+                        <Section title="Danger zone" hint="Delete this channel">
+                            <Field label="Delete channel" hint="Default soft-delete archives the workspace folder. Hard delete removes it from disk.">
+                                <div className="flex flex-col gap-2">
+                                    <label className="flex items-center gap-2 text-xs">
+                                        <input
+                                            type="checkbox"
+                                            checked={hardDelete}
+                                            onChange={(e) => setHardDelete(e.target.checked)}
+                                        />
+                                        Also delete files (cannot be undone)
+                                    </label>
+                                    <Button
+                                        type="button"
+                                        variant="destructive"
+                                        onClick={() => setConfirmingDelete(true)}
+                                    >
+                                        Delete channel
+                                    </Button>
+                                </div>
+                            </Field>
+                        </Section>
+                    )}
                 </div>
 
                 {error && (
@@ -221,6 +337,46 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
                         </Button>
                     )}
                 </div>
+
+                {confirmingDelete && (
+                    <div
+                        className="absolute inset-0 flex items-center justify-center"
+                        style={{ background: 'color-mix(in srgb, var(--app-bg) 85%, transparent)' }}
+                    >
+                        <div
+                            className="rounded-lg border p-5 max-w-sm w-full"
+                            style={{ background: 'var(--app-bg)', borderColor: 'var(--app-border)' }}
+                        >
+                            <div className="font-semibold mb-2">Delete this channel?</div>
+                            <div className="text-sm mb-4" style={{ color: 'var(--app-hint)' }}>
+                                {hardDelete
+                                    ? 'This will remove the channel from the sidebar and PERMANENTLY delete the workspace folder on disk. This cannot be undone.'
+                                    : 'This will hide the channel and rename its workspace folder to *-archived-{ts}. Files are kept on disk.'}
+                            </div>
+                            {deleteError && (
+                                <div className="text-sm mb-3 text-red-500">{deleteError}</div>
+                            )}
+                            <div className="flex gap-2 justify-end">
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    onClick={() => setConfirmingDelete(false)}
+                                    disabled={deleting}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="destructive"
+                                    onClick={handleConfirmDelete}
+                                    disabled={deleting}
+                                >
+                                    {deleting ? 'Deleting…' : (hardDelete ? 'Delete + remove files' : 'Soft delete')}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 <style>{`
                     .form-input {

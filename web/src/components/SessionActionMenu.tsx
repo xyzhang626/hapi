@@ -18,6 +18,14 @@ type SessionActionMenuProps = {
     onDelete: () => void
     anchorPoint: { x: number; y: number }
     menuId?: string
+    /** Stage 2: present + true when this session is a channel thread with `pinned=true`. Omit for non-thread sessions. */
+    pinned?: boolean
+    /** Stage 2: toggle pin (channel-thread only). */
+    onTogglePin?: () => void
+    /** Stage 2: present + 'shared' when this thread has been shared to its channel. */
+    shared?: boolean
+    /** Stage 2: toggle thread visibility between private and shared (creator-only). */
+    onToggleShare?: () => void
 }
 
 function EditIcon(props: { className?: string }) {
@@ -100,7 +108,11 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
         onArchive,
         onDelete,
         anchorPoint,
-        menuId
+        menuId,
+        pinned,
+        onTogglePin,
+        shared,
+        onToggleShare
     } = props
     const menuRef = useRef<HTMLDivElement | null>(null)
     const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
@@ -121,6 +133,16 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
     const handleDelete = () => {
         onClose()
         onDelete()
+    }
+
+    const handleTogglePin = () => {
+        onClose()
+        onTogglePin?.()
+    }
+
+    const handleToggleShare = () => {
+        onClose()
+        onToggleShare?.()
     }
 
     const updatePosition = useCallback(() => {
@@ -238,6 +260,30 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                     <EditIcon className="text-[var(--app-hint)]" />
                     {t('session.action.rename')}
                 </button>
+
+                {onTogglePin !== undefined && (
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
+                        onClick={handleTogglePin}
+                    >
+                        <span className="inline-block w-[18px] text-[var(--app-hint)]">{pinned ? '📌' : '📍'}</span>
+                        {pinned ? 'Unpin from channel header' : 'Pin to channel header'}
+                    </button>
+                )}
+
+                {onToggleShare !== undefined && (
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
+                        onClick={handleToggleShare}
+                    >
+                        <span className="inline-block w-[18px] text-[var(--app-hint)]">{shared ? '👁' : '🔒'}</span>
+                        {shared ? 'Unshare from channel (back to private)' : 'Share to channel'}
+                    </button>
+                )}
 
                 {sessionActive ? (
                     <button

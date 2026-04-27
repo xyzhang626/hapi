@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
     Navigate,
@@ -775,6 +775,67 @@ const channelThreadRoute = createRoute({
     component: ChannelThreadPage,
 })
 
+function InviteAcceptPage() {
+    const { api } = useAppContext()
+    const navigate = useNavigate()
+    const params = useParams({ strict: false }) as { token?: string }
+    const token = params.token ?? ''
+    const [error, setError] = useState<string | null>(null)
+    const [busy, setBusy] = useState(true)
+
+    useEffect(() => {
+        if (!token) {
+            setError('Missing invite token')
+            setBusy(false)
+            return
+        }
+        let cancelled = false
+        ;(async () => {
+            try {
+                const r = await api.acceptInvite(token)
+                if (cancelled) return
+                void navigate({ to: '/channels/$channelId', params: { channelId: r.channelId } })
+            } catch (err) {
+                if (cancelled) return
+                setError(err instanceof Error ? err.message : 'Invite is invalid or expired')
+                setBusy(false)
+            }
+        })()
+        return () => { cancelled = true }
+    }, [api, token, navigate])
+
+    return (
+        <div className="flex h-dvh items-center justify-center" style={{ background: 'var(--app-bg)', color: 'var(--app-fg)' }}>
+            <div className="text-center max-w-md p-6">
+                {busy && !error && (
+                    <div className="text-sm" style={{ color: 'var(--app-hint)' }}>
+                        Joining channel…
+                    </div>
+                )}
+                {error && (
+                    <>
+                        <div className="text-lg font-semibold mb-2 text-red-500">Couldn't join channel</div>
+                        <div className="text-sm mb-4" style={{ color: 'var(--app-hint)' }}>{error}</div>
+                        <button
+                            className="px-3 py-2 rounded-md text-sm"
+                            style={{ background: 'var(--app-button)', color: 'var(--app-button-text)' }}
+                            onClick={() => navigate({ to: '/channels' })}
+                        >
+                            Go to channels
+                        </button>
+                    </>
+                )}
+            </div>
+        </div>
+    )
+}
+
+const inviteAcceptRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/invite/$token',
+    component: InviteAcceptPage,
+})
+
 export const routeTree = rootRoute.addChildren([
     indexRoute,
     sessionsRoute.addChildren([
@@ -793,6 +854,7 @@ export const routeTree = rootRoute.addChildren([
             channelThreadRoute,
         ]),
     ]),
+    inviteAcceptRoute,
     settingsRoute,
 ])
 

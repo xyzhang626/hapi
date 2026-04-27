@@ -487,8 +487,9 @@ export class ApiClient {
         })
     }
 
-    async deleteChannel(channelId: string): Promise<void> {
-        await this.request(`/api/channels/${encodeURIComponent(channelId)}`, {
+    async deleteChannel(channelId: string, options?: { hard?: boolean }): Promise<void> {
+        const qs = options?.hard ? '?hard=true' : ''
+        await this.request(`/api/channels/${encodeURIComponent(channelId)}${qs}`, {
             method: 'DELETE'
         })
     }

@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import type { ApiClient } from '@/api/client'
 import type { ChannelMessage, Channel, Session } from '@/types/api'
 import { ThreadCard } from './ThreadCard'
 import { AgentConfigEditor } from './AgentConfigEditor'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 import { useAppContext } from '@/lib/app-context'
 
 const QUICK_EMOJIS = ['👀', '👍', '🙏', '🤔', '✅', '⏳', '😅']
@@ -26,8 +28,12 @@ type ChannelViewMessage = ChannelMessage & {
 
 export function ChannelView({ api, channel, messages, sessions, onOpenThread, onRefresh, botTypingAction }: ChannelViewProps) {
     const { userId } = useAppContext()
+    const navigate = useNavigate()
     const [showSettings, setShowSettings] = useState(false)
     const [requestingThread, setRequestingThread] = useState(false)
+    const [showNewThreadDialog, setShowNewThreadDialog] = useState(false)
+    const [newThreadDraft, setNewThreadDraft] = useState('')
+    const [newThreadError, setNewThreadError] = useState<string | null>(null)
     const isOwner = userId != null && channel.createdBy === userId
     const [input, setInput] = useState('')
     const [sending, setSending] = useState(false)
@@ -65,18 +71,27 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
         }
     }
 
-    const handleNewThreadClick = async () => {
+    const handleNewThreadClick = () => {
         if (requestingThread) return
-        const topic = window.prompt('What should the new thread be about?')
-        if (!topic || !topic.trim()) return
+        setNewThreadDraft('')
+        setNewThreadError(null)
+        setShowNewThreadDialog(true)
+    }
+
+    const handleSubmitNewThread = async () => {
+        const topic = newThreadDraft.trim()
+        if (!topic || requestingThread) return
         setRequestingThread(true)
+        setNewThreadError(null)
         try {
-            await api.requestNewThread(channel.id, topic.trim())
+            await api.requestNewThread(channel.id, topic)
             // Bot will pick up the strong signal and call spawn_thread via MCP.
             // The new thread will appear via SSE channel-message-received +
             // channelSessions invalidation; no explicit refresh needed.
+            setShowNewThreadDialog(false)
+            setNewThreadDraft('')
         } catch (err) {
-            console.error('requestNewThread failed:', err)
+            setNewThreadError(err instanceof Error ? err.message : 'Failed to request new thread')
         } finally {
             setRequestingThread(false)
         }
@@ -250,8 +265,73 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                         // the channels query invalidation in useSSE.
                         onRefresh()
                     }}
+                    onDeleted={() => {
+                        // Navigate away from the now-deleted channel; the
+                        // SSE channel-removed event will refresh the sidebar.
+                        void navigate({ to: '/channels' })
+                    }}
                 />
             )}
+
+            <Dialog
+                open={showNewThreadDialog}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setShowNewThreadDialog(false)
+                        setNewThreadError(null)
+                    }
+                }}
+            >
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>New thread</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 mt-2">
+                        <div className="text-sm" style={{ color: 'var(--app-hint)' }}>
+                            Briefly describe the topic — the channel agent will spawn a thread session and start working on it.
+                        </div>
+                        <textarea
+                            value={newThreadDraft}
+                            onChange={(e) => setNewThreadDraft(e.target.value)}
+                            placeholder="e.g. Investigate the slow checkout endpoint"
+                            rows={3}
+                            autoFocus
+                            className="w-full px-3 py-2 rounded-md border resize-y text-sm"
+                            style={{
+                                background: 'var(--app-bg)',
+                                color: 'var(--app-fg)',
+                                borderColor: 'var(--app-border)'
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                    e.preventDefault()
+                                    void handleSubmitNewThread()
+                                }
+                            }}
+                        />
+                        {newThreadError && (
+                            <div className="text-sm text-red-500">{newThreadError}</div>
+                        )}
+                    </div>
+                    <div className="mt-4 flex justify-end gap-2">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setShowNewThreadDialog(false)}
+                            disabled={requestingThread}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            onClick={handleSubmitNewThread}
+                            disabled={requestingThread || !newThreadDraft.trim()}
+                        >
+                            {requestingThread ? 'Sending…' : 'Spawn thread'}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }
