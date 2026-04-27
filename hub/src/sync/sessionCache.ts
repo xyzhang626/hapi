@@ -255,6 +255,24 @@ export class SessionCache {
                 }
             })
         }
+
+        if (wasThinking !== session.thinking) {
+            this.emitChannelBotTypingIfApplicable(session)
+        }
+    }
+
+    private emitChannelBotTypingIfApplicable(session: Session, overrideAction?: string | null): void {
+        if (!session.isChannelBot || !session.channelId) return
+        const action = overrideAction !== undefined
+            ? overrideAction
+            : (session.thinking ? 'thinking' : null)
+        this.publisher.emit({
+            type: 'channel-bot-typing',
+            channelId: session.channelId,
+            namespace: session.namespace,
+            sessionId: session.id,
+            action
+        })
     }
 
     applyBackgroundTaskDelta(sessionId: string, delta: { started: number; completed: number }): void {
@@ -323,6 +341,7 @@ export class SessionCache {
         session.backgroundTaskCount = 0
 
         this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false, thinking: false, backgroundTaskCount: 0 } })
+        this.emitChannelBotTypingIfApplicable(session, null)
     }
 
     expireInactive(now: number = Date.now()): string[] {
@@ -336,6 +355,7 @@ export class SessionCache {
             session.thinking = false
             expired.push(session.id)
             this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false } })
+            this.emitChannelBotTypingIfApplicable(session, null)
         }
 
         return expired

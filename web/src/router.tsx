@@ -34,7 +34,7 @@ import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message
 import { clearDraftsAfterSend } from '@/lib/clearDraftsAfterSend'
 import { ChannelList } from '@/components/ChannelList'
 import { ChannelView } from '@/components/ChannelView'
-import { useChannels, useChannelMessages, useChannelSessions } from '@/hooks/queries/useChannels'
+import { useChannels, useChannelMessages, useChannelSessions, useChannelBotTyping } from '@/hooks/queries/useChannels'
 import { useWorkspaceDefaults } from '@/hooks/queries/useWorkspaceDefaults'
 import type { Machine } from '@/types/api'
 import FilesPage from '@/routes/sessions/files'
@@ -436,6 +436,7 @@ function ChannelsPage() {
     const { personalChannelId } = useWorkspaceDefaults(api, 'user')
     const { messages, refetch: refetchMessages } = useChannelMessages(api, selectedChannelId)
     const { sessions: channelSessions } = useChannelSessions(api, selectedChannelId)
+    const botTypingAction = useChannelBotTyping(selectedChannelId)
     const { width: sidebarWidth, onPointerDown: handleResizePointerDown } = useSidebarResize()
 
     const selectedChannel = channels.find((c) => c.id === selectedChannelId) ?? null
@@ -510,6 +511,7 @@ function ChannelsPage() {
                         sessions={channelSessions as any}
                         onOpenThread={handleOpenThread}
                         onRefresh={handleRefreshMessages}
+                        botTypingAction={botTypingAction}
                     />
                 ) : (
                     <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--app-hint)' }}>

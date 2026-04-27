@@ -22,4 +22,6 @@ export const queryKeys = {
     channelMessages: (channelId: string) => ['channel-messages', channelId] as const,
     channelSessions: (channelId: string) => ['channel-sessions', channelId] as const,
     channelMembers: (channelId: string) => ['channel-members', channelId] as const,
+    channelBotTyping: (channelId: string) => ['channel-bot-typing', channelId] as const,
+    channelAgentConfig: (channelId: string) => ['channel-agent-config', channelId] as const,
 }

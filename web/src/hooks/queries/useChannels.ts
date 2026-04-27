@@ -71,3 +71,21 @@ export function useChannelSessions(api: ApiClient | null, channelId: string | un
         error: query.error instanceof Error ? query.error.message : null,
     }
 }
+
+/**
+ * Stage 2: surface the channel bot's typing-indicator state. Hub emits
+ * `channel-bot-typing` events whenever the bot session's `thinking` flag
+ * transitions; useSSE writes the latest action string into this query
+ * (or null when the bot is idle).
+ */
+export function useChannelBotTyping(channelId: string | undefined): string | null {
+    const query = useQuery<string | null>({
+        queryKey: queryKeys.channelBotTyping(channelId ?? ''),
+        queryFn: () => null,
+        enabled: Boolean(channelId),
+        staleTime: Infinity,
+        gcTime: Infinity,
+    })
+    return query.data ?? null
+}
+

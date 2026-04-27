@@ -558,6 +558,33 @@ export function useSSE(options: {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.channelSessions(event.channelId) })
             }
 
+            if (event.type === 'message-reaction-added' || event.type === 'message-reaction-removed') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.channelMessages(event.channelId) })
+            }
+
+            if (
+                event.type === 'thread-pinned'
+                || event.type === 'thread-unpinned'
+                || event.type === 'thread-visibility-changed'
+            ) {
+                queueSessionDetailInvalidation(event.sessionId)
+                queueSessionListInvalidation()
+                // The session's channelId is on the cached session detail; invalidate
+                // any channel-sessions list that may include this thread.
+                const sessionResp = queryClient.getQueryData<SessionResponse | undefined>(queryKeys.session(event.sessionId))
+                const channelId = sessionResp?.session?.channelId
+                if (channelId) {
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.channelSessions(channelId) })
+                }
+            }
+
+            if (event.type === 'channel-bot-typing') {
+                queryClient.setQueryData<string | null>(
+                    queryKeys.channelBotTyping(event.channelId),
+                    event.action ?? null
+                )
+            }
+
             if (event.type === 'channel-member-added' || event.type === 'channel-member-removed') {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.channels })
                 void queryClient.invalidateQueries({ queryKey: queryKeys.channelMembers(event.channelId) })
