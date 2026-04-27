@@ -43,6 +43,18 @@ function resolveSessionForNamespace(
     if (access.ok) {
         return { ok: true, session: access.session, sessionId: access.sessionId }
     }
+    // Stage 2: channel-bound sessions (bot or thread) live in the channel's
+    // namespace. The runner CLI may auth in a different namespace (typically
+    // 'default' for the embedded runner) yet still need to read/write its
+    // own spawned session — same justification as the socket-side widening
+    // in hub/src/socket/handlers/cli/index.ts. Treat any /cli auth as
+    // sufficient when the session is channel-bound.
+    if (access.reason === 'access-denied') {
+        const cross = engine.getSession(sessionId)
+        if (cross && (cross.isChannelBot || (typeof cross.channelId === 'string' && cross.channelId.length > 0))) {
+            return { ok: true, session: cross, sessionId }
+        }
+    }
     return {
         ok: false,
         status: access.reason === 'access-denied' ? 403 : 404,
@@ -127,7 +139,20 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
             schedule: typeof meta.threadSchedule === 'string' ? meta.threadSchedule : undefined
         } : undefined
 
-        const namespace = c.get('namespace')
+        const callerNamespace = c.get('namespace')
+        // Stage 2: when this session is bound to a channel (bot or thread),
+        // it must live in the channel's namespace — not the runner's. The
+        // embedded runner authenticates as 'default'; without this remap a
+        // bot spawned for a channel in 'alice' would land in 'default' and
+        // become unreachable to its owner (Alice can't view it, MCP tools
+        // can't find the channel, watchdog respawns into the wrong ns).
+        let namespace = callerNamespace
+        if (channelOpts?.channelId) {
+            const channel = engine.getChannelById(channelOpts.channelId)
+            if (channel) {
+                namespace = channel.namespace
+            }
+        }
         const session = engine.getOrCreateSession(
             parsed.data.tag,
             parsed.data.metadata,

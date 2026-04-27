@@ -73,6 +73,16 @@ export class SyncEngine {
     /** Stage 2: how long to wait after a channel-bot session ends before
      *  the watchdog respawns it. Production = 5s. Tests override to 0. */
     private botWatchdogRestartDelayMs = 5_000
+    /** Stage 2: opt-in lookup hook for the most recent user who triggered a
+     *  strong signal in a channel. Used by botSpawnThread to credit the
+     *  thread to the requesting user instead of the bot session id. Wired
+     *  by hub/src/index.ts after ChannelAgent is constructed (avoids a
+     *  module-level circular dep). */
+    private channelTriggerLookup: ((channelId: string) => string | null) | null = null
+
+    setChannelTriggerLookup(fn: (channelId: string) => string | null): void {
+        this.channelTriggerLookup = fn
+    }
 
     constructor(
         store: Store,
@@ -681,6 +691,15 @@ export class SyncEngine {
         return this.channelCache.getChannel(channelId, namespace)
     }
 
+    /** Look up a channel by id without a namespace filter. Used by Stage 2
+     *  paths that only have the channelId — e.g. CLI POST /sessions remapping
+     *  bot/thread sessions to the channel's namespace, or the channel-bot
+     *  RPC handlers resolving the channel from a bot session that lives
+     *  in the embedded runner's 'default' namespace. */
+    getChannelById(channelId: string): StoredChannel | null {
+        return this.store.channels.getChannelById(channelId)
+    }
+
     isChannelMember(channelId: string, userId: string): boolean {
         return this.channelCache.isMember(channelId, userId)
     }
@@ -783,6 +802,31 @@ export class SyncEngine {
             this.store.channels.setBotSessionId(channelId, namespace, result.sessionId)
             this.channelCache.updateChannel(channelId, namespace)
             console.log(`[SyncEngine] Channel bot spawned: channel=${channelId} session=${result.sessionId}`)
+
+            // Stage 2 §V: inject the __channel_initialized strong signal so the
+            // bot's system prompt fires its welcome behavior. Skip on resume —
+            // this is a watchdog restart, the bot already greeted in its prior
+            // life and resume preserves that history.
+            if (!options?.resumeSessionId) {
+                const memberRefs = this.channelCache.getMemberUserIds(channelId)
+                const members = memberRefs.map((userId) => {
+                    const u = this.store.workspaceUsers.getUser(namespace, userId)
+                    return u?.displayName ?? userId
+                })
+                const initPayload = JSON.stringify({
+                    channelName: channel.name,
+                    channelId: channel.id,
+                    members
+                })
+                const initSignal = `<system>__channel_initialized: ${initPayload}</system>`
+                // Defer slightly so the bot session is fully wired up before we
+                // push the first message in.
+                setTimeout(() => {
+                    void this.sendMessage(result.sessionId, { text: initSignal, sentFrom: 'webapp' }).catch((err) => {
+                        console.error('[SyncEngine] inject __channel_initialized failed:', err)
+                    })
+                }, 1500)
+            }
         } else {
             console.error(`[SyncEngine] Channel bot spawn failed for ${channelId}: ${result.message}`)
         }
@@ -843,8 +887,17 @@ export class SyncEngine {
         if (result.type === 'error') return result
 
         const spawnedId = result.sessionId
+        // Stage 2: credit the user who triggered the strong signal that led
+        // the bot to spawn this thread. The bot itself doesn't pass userId
+        // through MCP; ChannelAgent shadow-tracks the most recent triggering
+        // user per-channel and exposes it here. Falling back to botSessionId
+        // would mis-attribute the thread to "bot" — breaking visibility
+        // creator-only checks (Alice fails to flip "Share to channel" because
+        // the row says she didn't create it) and rendering "by [bot uuid]".
+        const triggeringUserId = this.channelTriggerLookup?.(channelId) ?? null
+        const createdByUserId = triggeringUserId ?? botSessionId
         // Attach the new session to the channel
-        this.attachSessionToChannel(spawnedId, channelId, namespace, opts.title, botSessionId)
+        this.attachSessionToChannel(spawnedId, channelId, namespace, opts.title, createdByUserId)
 
         // For scheduled threads, set the scheduled/pinned/visibility on the session row
         if (opts.scheduled) {
@@ -863,7 +916,7 @@ export class SyncEngine {
                 taskTitle: opts.title,
                 threadId: spawnedId,
                 startedAt: Date.now(),
-                startedBy: botSessionId,
+                startedBy: createdByUserId,
                 scheduled: opts.scheduled === true,
                 schedule: opts.schedule ?? null,
                 visibility: opts.scheduled ? 'shared' : 'private'
@@ -1284,7 +1337,12 @@ export class SyncEngine {
             this.store.channelInvites.deleteInvite(inviteId)
             return null
         }
-        if (invite.namespace !== requesterNamespace) return null
+        // Stage 2: invites are explicitly cross-namespace — Alice creates an
+        // invite for her #engineering and shares the link with Bob (ns=bob).
+        // Refusing acceptance when invite.namespace !== requesterNamespace
+        // makes invites useless. The membership table is the cross-namespace
+        // bridge.
+        void requesterNamespace
         this.addChannelMember(invite.channelId, userId, 'member')
         return { channelId: invite.channelId, namespace: invite.namespace }
     }

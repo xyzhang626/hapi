@@ -85,6 +85,20 @@ export function getChannel(db: Database, id: string, namespace: string): StoredC
     return row ? toStoredChannel(row) : null
 }
 
+/**
+ * Look up a channel by id without a namespace filter. Used by Stage 2 paths
+ * where the caller (e.g. CLI POST /sessions, channel-bot RPC handlers) only
+ * has the channelId and needs to discover the channel's actual namespace —
+ * e.g. when an embedded runner in 'default' namespace spawns a bot whose
+ * channel lives in another user's namespace.
+ */
+export function getChannelById(db: Database, id: string): StoredChannel | null {
+    const row = db.prepare(
+        'SELECT * FROM channels WHERE id = @id'
+    ).get({ id }) as DbChannelRow | null
+    return row ? toStoredChannel(row) : null
+}
+
 export function getChannelsByNamespace(db: Database, namespace: string): StoredChannel[] {
     const rows = db.prepare(
         'SELECT * FROM channels WHERE namespace = @namespace ORDER BY created_at ASC'
@@ -92,13 +106,21 @@ export function getChannelsByNamespace(db: Database, namespace: string): StoredC
     return rows.map(toStoredChannel)
 }
 
+/**
+ * Stage 2: list channels where the user is a member, regardless of channel
+ * namespace. The earlier single-user model gated by `c.namespace = @namespace`,
+ * which made invited cross-namespace members invisible to themselves — Bob
+ * accepts an invite to Alice's channel but never sees it because the channel
+ * lives in Alice's namespace. Membership is the correct boundary.
+ */
 export function getChannelsForUser(db: Database, namespace: string, userId: string): StoredChannel[] {
+    void namespace
     const rows = db.prepare(`
         SELECT c.* FROM channels c
         JOIN channel_members cm ON c.id = cm.channel_id
-        WHERE c.namespace = @namespace AND cm.user_id = @userId
+        WHERE cm.user_id = @userId
         ORDER BY c.created_at ASC
-    `).all({ namespace, userId }) as DbChannelRow[]
+    `).all({ userId }) as DbChannelRow[]
     return rows.map(toStoredChannel)
 }
 

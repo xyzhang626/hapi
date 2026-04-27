@@ -7,6 +7,7 @@ import {
     deleteChannel,
     getAllChannels,
     getChannel,
+    getChannelById,
     getChannelByName,
     getChannelsByNamespace,
     getChannelsForUser,
@@ -36,6 +37,10 @@ export class ChannelStore {
 
     getChannel(id: string, namespace: string): StoredChannel | null {
         return getChannel(this.db, id, namespace)
+    }
+
+    getChannelById(id: string): StoredChannel | null {
+        return getChannelById(this.db, id)
     }
 
     getAllChannels(): StoredChannel[] {
