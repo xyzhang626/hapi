@@ -1117,19 +1117,26 @@ export class SyncEngine {
         if (!channel) return false
         const hard = options?.hardDelete === true
 
-        // Stage 2: archive threads + kill bot session before deleting the row
-        const sessions = this.store.sessions.getSessionsByChannel(channelId, namespace)
+        // Stage 2: archive threads + kill bot session before deleting the row.
+        // Use the cross-namespace listing so bot sessions registered under a
+        // different namespace (e.g. embedded-runner's 'default') are still
+        // found and cleaned up — otherwise the FK on channels.id trips.
+        const sessions = this.store.sessions.getAllSessionsByChannel(channelId)
         for (const s of sessions) {
             if (s.isChannelBot) {
                 // Best-effort kill of bot CLI session
                 this.rpcGateway.killSession(s.id).catch(() => {/* */})
-                this.store.sessions.deleteSession(s.id, namespace)
+                this.store.sessions.deleteSessionAnyNamespace(s.id)
             } else {
-                this.store.sessions.setThreadStatus(s.id, namespace, 'archived')
+                // Archive threads in their own namespace (they belong to the
+                // user who created them).
+                this.store.sessions.setThreadStatus(s.id, s.namespace, 'archived')
             }
         }
 
-        this.store.sessions.detachSessionsFromChannel(channelId, namespace)
+        // Detach surviving non-bot sessions across all namespaces — they may
+        // be in different ones if multi-user channels share threads.
+        this.store.sessions.detachAllSessionsFromChannel(channelId)
         const deleted = this.store.channels.deleteChannel(channelId, namespace)
         if (deleted) {
             this.channelCache.removeChannel(channelId, namespace)

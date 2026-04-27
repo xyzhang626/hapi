@@ -4,9 +4,12 @@ import type { StoredSession, ThreadVisibility, VersionedUpdateResult } from './t
 import {
     attachToChannel,
     deleteSession,
+    deleteSessionAnyNamespace,
     detachSession,
+    detachAllSessionsFromChannel,
     detachSessionsFromChannel,
     getAllChannelBotSessions,
+    getAllSessionsByChannel,
     getChannelBotSessionId,
     getOrCreateSession,
     getSession,
@@ -125,8 +128,16 @@ export class SessionStore {
         return deleteSession(this.db, id, namespace)
     }
 
+    deleteSessionAnyNamespace(id: string): boolean {
+        return deleteSessionAnyNamespace(this.db, id)
+    }
+
     getSessionsByChannel(channelId: string, namespace: string): StoredSession[] {
         return getSessionsByChannel(this.db, channelId, namespace)
+    }
+
+    getAllSessionsByChannel(channelId: string): StoredSession[] {
+        return getAllSessionsByChannel(this.db, channelId)
     }
 
     getUnassignedSessions(namespace: string): StoredSession[] {
@@ -135,6 +146,10 @@ export class SessionStore {
 
     detachSessionsFromChannel(channelId: string, namespace: string): number {
         return detachSessionsFromChannel(this.db, channelId, namespace)
+    }
+
+    detachAllSessionsFromChannel(channelId: string): number {
+        return detachAllSessionsFromChannel(this.db, channelId)
     }
 
     detachSession(sessionId: string, channelId: string, namespace: string): boolean {

@@ -457,11 +457,44 @@ export function getSessionsByChannel(db: Database, channelId: string, namespace:
     return rows.map(toStoredSession)
 }
 
+/**
+ * Stage 2: cross-namespace lookup of sessions attached to a channel.
+ * Used by channel delete to find bot sessions that may be in a
+ * different namespace from the channel (e.g., the embedded runner
+ * spawns bot CLIs that auth as 'default' even though the channel
+ * is in the user's namespace).
+ */
+export function getAllSessionsByChannel(db: Database, channelId: string): StoredSession[] {
+    const rows = db.prepare(
+        'SELECT * FROM sessions WHERE channel_id = @channel_id ORDER BY updated_at DESC'
+    ).all({ channel_id: channelId }) as DbSessionRow[]
+    return rows.map(toStoredSession)
+}
+
 export function detachSessionsFromChannel(db: Database, channelId: string, namespace: string): number {
     const result = db.prepare(
         'UPDATE sessions SET channel_id = NULL WHERE channel_id = @channel_id AND namespace = @namespace'
     ).run({ channel_id: channelId, namespace })
     return result.changes
+}
+
+/**
+ * Stage 2: cross-namespace detach. See getAllSessionsByChannel above.
+ * Channel deletes need this so bot sessions in 'default' namespace
+ * are unlinked before the channel row is deleted (otherwise the FK
+ * REFERENCES channels(id) ON DELETE RESTRICT trips).
+ */
+export function detachAllSessionsFromChannel(db: Database, channelId: string): number {
+    const result = db.prepare(
+        'UPDATE sessions SET channel_id = NULL WHERE channel_id = @channel_id'
+    ).run({ channel_id: channelId })
+    return result.changes
+}
+
+/** Cross-namespace delete used by channel cleanup. */
+export function deleteSessionAnyNamespace(db: Database, id: string): boolean {
+    const result = db.prepare('DELETE FROM sessions WHERE id = ?').run(id)
+    return result.changes > 0
 }
 
 export function getUnassignedSessions(db: Database, namespace: string): StoredSession[] {
