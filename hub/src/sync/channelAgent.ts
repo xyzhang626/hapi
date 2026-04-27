@@ -277,7 +277,8 @@ export class ChannelAgent {
 
         this.flushWeakBuffer(channelId, namespace, ctx)
         const tag = `thread-${kind}`
-        const summary = `<system>${tag}: { threadId: "${sessionId}", title: ${JSON.stringify(threadTitle)}, status: "${threadStatus}" }</system>`
+        const safeTitle = sanitizeForSystemTag(threadTitle)
+        const summary = `<system>${tag}: { threadId: "${sessionId}", title: ${JSON.stringify(safeTitle)}, status: "${threadStatus}" }</system>`
         void this.engine.sendMessage(ctx.botSessionId, { text: summary, sentFrom: 'webapp' }).catch((err) => {
             console.error('[ChannelAgent] forward thread state failed:', err)
         })

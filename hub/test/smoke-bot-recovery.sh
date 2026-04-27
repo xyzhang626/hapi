@@ -46,13 +46,21 @@ done
 # Find the CLI subprocess for the bot session
 sleep 2
 echo "--- finding bot CLI process ---"
-BOT_PID=$(pgrep -f "HAPI_IS_CHANNEL_BOT=1.*$CH_ID" 2>/dev/null | head -1 || true)
-if [ -z "$BOT_PID" ]; then
-  # Fallback: pick any cli process attached to the runner
-  BOT_PID=$(pgrep -f "cli/src/index.ts" | tail -1)
-fi
+# pgrep -f matches command line; HAPI_IS_CHANNEL_BOT is passed as env var,
+# not argv, so we have to scan /proc/<pid>/environ instead. The runner's
+# `bun cli/src/index.ts runner start-sync` gives us the candidate pool.
+BOT_PID=""
+for p in $(pgrep -f "cli/src/index.ts" 2>/dev/null); do
+    if grep -aql "HAPI_IS_CHANNEL_BOT=1" "/proc/$p/environ" 2>/dev/null; then
+        # And it should match this channel
+        if grep -aql "HAPI_CHANNEL_ID=$CH_ID" "/proc/$p/environ" 2>/dev/null; then
+            BOT_PID="$p"
+            break
+        fi
+    fi
+done
 echo "  bot pid: $BOT_PID"
-[ -n "$BOT_PID" ] || { echo "FAIL: couldn't find bot pid"; exit 1; }
+[ -n "$BOT_PID" ] || { echo "FAIL: couldn't find bot pid (no proc with HAPI_IS_CHANNEL_BOT=1 + HAPI_CHANNEL_ID=$CH_ID)"; exit 1; }
 
 echo "--- killing bot pid $BOT_PID ---"
 kill "$BOT_PID" 2>&1 || echo "  (already gone)"

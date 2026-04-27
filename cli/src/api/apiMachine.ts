@@ -103,7 +103,18 @@ export class ApiMachineClient {
 
     setRPCHandlers({ spawnSession, stopSession, requestShutdown }: MachineRpcHandlers): void {
         this.rpcHandlerManager.registerHandler('spawn-happy-session', async (params: any) => {
-            const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, model, effort, modelReasoningEffort, yolo, permissionMode, token, sessionType, worktreeName } = params || {}
+            const {
+                directory, sessionId, resumeSessionId, machineId,
+                approvedNewDirectoryCreation, agent, model, effort,
+                modelReasoningEffort, yolo, permissionMode, token,
+                sessionType, worktreeName,
+                // Stage 2: channel-bot extras. Hub passes these so the spawned
+                // CLI can advertise itself as a channel bot via env vars; if
+                // we drop them here, the bot session is registered as a normal
+                // session and the hub watchdog never fires on its end.
+                isChannelBot, channelId, botName, agentConfigJson,
+                scheduled, schedule, customSystemPrompt
+            } = params || {}
 
             if (!directory) {
                 throw new Error('Directory is required')
@@ -123,7 +134,14 @@ export class ApiMachineClient {
                 permissionMode,
                 token,
                 sessionType,
-                worktreeName
+                worktreeName,
+                isChannelBot,
+                channelId,
+                botName,
+                agentConfigJson,
+                scheduled,
+                schedule,
+                customSystemPrompt
             })
 
             switch (result.type) {
