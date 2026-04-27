@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import type { ApiClient } from '@/api/client'
@@ -33,6 +33,11 @@ type AgentConfigEditorProps = {
     canEdit: boolean
     /** Called after the user confirms a soft or hard delete. Lets the parent navigate away. */
     onDeleted?: () => void
+    /** Stage 2: current channel meta — name + description, used by the Channel section. */
+    channelName?: string
+    channelDescription?: string | null
+    /** Current user — needed to mark "you" in the member list and avoid self-remove. */
+    currentUserId?: string | null
 }
 
 /**
@@ -42,7 +47,7 @@ type AgentConfigEditorProps = {
  * blob, which the hub mirrors to the on-disk JSON and hot-reloads.
  */
 export function AgentConfigEditor(props: AgentConfigEditorProps) {
-    const { api, channelId, initialConfig, onClose, onSaved, canEdit, onDeleted } = props
+    const { api, channelId, initialConfig, onClose, onSaved, canEdit, onDeleted, channelName, channelDescription, currentUserId } = props
     const [draft, setDraft] = useState<AgentConfig>(() => normalize(initialConfig))
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -51,6 +56,15 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
     const [creatingInvite, setCreatingInvite] = useState(false)
     const [inviteError, setInviteError] = useState<string | null>(null)
     const [copied, setCopied] = useState(false)
+    // Channel-meta (name / description) edits — owner-only
+    const [nameDraft, setNameDraft] = useState(channelName ?? '')
+    const [descDraft, setDescDraft] = useState(channelDescription ?? '')
+    const [savingMeta, setSavingMeta] = useState(false)
+    const [metaError, setMetaError] = useState<string | null>(null)
+    // Members list + remove
+    const [members, setMembers] = useState<Array<{ userId: string; role: string; displayName?: string; namespace?: string | null }>>([])
+    const [loadingMembers, setLoadingMembers] = useState(false)
+    const [memberError, setMemberError] = useState<string | null>(null)
     // Danger zone
     const [hardDelete, setHardDelete] = useState(false)
     const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -61,6 +75,31 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
         setDraft(normalize(initialConfig))
         setError(null)
     }, [initialConfig])
+
+    useEffect(() => {
+        setNameDraft(channelName ?? '')
+        setDescDraft(channelDescription ?? '')
+    }, [channelName, channelDescription])
+
+    // Load members on first render so the Members section can list them
+    // and (for owner) offer per-row Remove buttons. Re-fetched after each
+    // successful remove.
+    const loadMembers = useCallback(async () => {
+        setLoadingMembers(true)
+        setMemberError(null)
+        try {
+            const r = await api.getChannelMembers(channelId)
+            setMembers(r.members as Array<{ userId: string; role: string; displayName?: string; namespace?: string | null }>)
+        } catch (err) {
+            setMemberError(err instanceof Error ? err.message : 'Failed to load members')
+        } finally {
+            setLoadingMembers(false)
+        }
+    }, [api, channelId])
+
+    useEffect(() => {
+        void loadMembers()
+    }, [loadMembers])
 
     // When the channel had no agentConfig at all, the very first save initializes
     // it — treat the form as dirty so the user can press Save without
@@ -134,6 +173,50 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
         }
     }
 
+    const handleSaveMeta = async () => {
+        setSavingMeta(true)
+        setMetaError(null)
+        try {
+            const updates: { name?: string; description?: string | null } = {}
+            const trimmedName = nameDraft.trim()
+            if (trimmedName && trimmedName !== (channelName ?? '')) {
+                updates.name = trimmedName
+            }
+            const trimmedDesc = descDraft.trim()
+            if (trimmedDesc !== (channelDescription ?? '').trim()) {
+                updates.description = trimmedDesc || null
+            }
+            if (Object.keys(updates).length === 0) {
+                return
+            }
+            await api.updateChannel(channelId, updates)
+            // Channel-updated SSE will refresh sidebar/header; no explicit reload here.
+        } catch (err) {
+            setMetaError(err instanceof Error ? err.message : 'Failed to update channel')
+        } finally {
+            setSavingMeta(false)
+        }
+    }
+
+    const handleRemoveMember = async (userId: string, displayName: string) => {
+        if (!confirm(`Remove ${displayName} from this channel?`)) return
+        setMemberError(null)
+        try {
+            await api.removeChannelMember(channelId, userId)
+            await loadMembers()
+        } catch (err) {
+            setMemberError(err instanceof Error ? err.message : 'Failed to remove member')
+        }
+    }
+
+    const metaDirty = useMemo(() => {
+        const trimmedName = nameDraft.trim()
+        const trimmedDesc = descDraft.trim()
+        const initialDesc = (channelDescription ?? '').trim()
+        return (trimmedName !== '' && trimmedName !== (channelName ?? ''))
+            || (trimmedDesc !== initialDesc)
+    }, [nameDraft, descDraft, channelName, channelDescription])
+
     return (
         <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
             <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
@@ -151,6 +234,44 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
                 )}
 
                 <div className="mt-4 space-y-5">
+                    <Section title="Channel" hint="Channel name and description (owner can edit)">
+                        <Field label="Channel name">
+                            <input
+                                type="text"
+                                value={nameDraft}
+                                onChange={(e) => setNameDraft(e.target.value)}
+                                disabled={!canEdit || savingMeta}
+                                placeholder="channel-name"
+                                className="form-input"
+                            />
+                        </Field>
+                        <Field label="Description" hint="Short summary shown in the channel header">
+                            <input
+                                type="text"
+                                value={descDraft}
+                                onChange={(e) => setDescDraft(e.target.value)}
+                                disabled={!canEdit || savingMeta}
+                                placeholder="What this channel is for"
+                                className="form-input"
+                            />
+                        </Field>
+                        {canEdit && (
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    onClick={handleSaveMeta}
+                                    disabled={savingMeta || !metaDirty}
+                                >
+                                    {savingMeta ? 'Saving…' : 'Save channel meta'}
+                                </Button>
+                                {metaError && (
+                                    <span className="text-xs text-red-500">{metaError}</span>
+                                )}
+                            </div>
+                        )}
+                    </Section>
+
                     <Section title="Identity" hint="Who the bot is in this channel">
                         <Field label="Bot name">
                             <input
@@ -288,6 +409,46 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
                             )}
                             {inviteError && (
                                 <div className="mt-2 text-xs text-red-500">{inviteError}</div>
+                            )}
+                        </Field>
+                        <Field label="Current members" hint="Owner can remove members; leaving the channel removes you">
+                            {loadingMembers ? (
+                                <div className="text-xs" style={{ color: 'var(--app-hint)' }}>Loading…</div>
+                            ) : members.length === 0 ? (
+                                <div className="text-xs" style={{ color: 'var(--app-hint)' }}>No members</div>
+                            ) : (
+                                <div className="flex flex-col gap-1">
+                                    {members.map((m) => {
+                                        const label = m.displayName ?? m.userId
+                                        const isMe = currentUserId != null && m.userId === currentUserId
+                                        const isOwner = m.role === 'owner'
+                                        const showRemove = canEdit && !isOwner && !isMe
+                                        return (
+                                            <div key={m.userId} className="flex items-center justify-between gap-2 px-2 py-1 rounded text-sm" style={{ background: 'var(--app-secondary-bg)' }}>
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <span className="truncate">{label}</span>
+                                                    {m.namespace && (
+                                                        <span className="text-xs" style={{ color: 'var(--app-hint)' }}>({m.namespace})</span>
+                                                    )}
+                                                    {isMe && (
+                                                        <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'var(--app-subtle-bg)', color: 'var(--app-hint)' }}>you</span>
+                                                    )}
+                                                    {isOwner && (
+                                                        <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'var(--app-subtle-bg)', color: 'var(--app-link)' }}>owner</span>
+                                                    )}
+                                                </div>
+                                                {showRemove && (
+                                                    <Button type="button" variant="secondary" onClick={() => handleRemoveMember(m.userId, label)}>
+                                                        Remove
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                            {memberError && (
+                                <div className="mt-2 text-xs text-red-500">{memberError}</div>
                             )}
                         </Field>
                     </Section>

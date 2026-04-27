@@ -259,6 +259,9 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                     channelId={channel.id}
                     initialConfig={(channel.agentConfig ?? null) as Parameters<typeof AgentConfigEditor>[0]['initialConfig']}
                     canEdit={isOwner}
+                    channelName={channel.name}
+                    channelDescription={channel.description ?? null}
+                    currentUserId={userId ?? null}
                     onClose={() => setShowSettings(false)}
                     onSaved={() => {
                         // Channel updates flow back through SSE channel-updated and
