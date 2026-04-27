@@ -263,7 +263,8 @@ function AppInner() {
         onConnect: handleSseConnect,
         onDisconnect: handleSseDisconnect,
         onEvent: handleSseEvent,
-        onToast: handleToast
+        onToast: handleToast,
+        currentUserId: user?.id != null ? String(user.id) : null
     })
 
     useVisibilityReporter({

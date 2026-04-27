@@ -182,6 +182,10 @@ export function useSSE(options: {
     onDisconnect?: (reason: string) => void
     onError?: (error: unknown) => void
     onToast?: (event: ToastEvent) => void
+    /** Stage 2: current user id (string). When channel-member-removed fires
+     * for this user, the SSE handler invalidates channel/session caches AND
+     * redirects out of the now-inaccessible channel/thread page. */
+    currentUserId?: string | null
 }): { subscriptionId: string | null } {
     const queryClient = useQueryClient()
     const onEventRef = useRef(options.onEvent)
@@ -189,6 +193,7 @@ export function useSSE(options: {
     const onDisconnectRef = useRef(options.onDisconnect)
     const onErrorRef = useRef(options.onError)
     const onToastRef = useRef(options.onToast)
+    const currentUserIdRef = useRef<string | null>(options.currentUserId ?? null)
     const eventSourceRef = useRef<EventSource | null>(null)
     const invalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const pendingInvalidationsRef = useRef<{
@@ -205,6 +210,10 @@ export function useSSE(options: {
     useEffect(() => {
         onEventRef.current = options.onEvent
     }, [options.onEvent])
+
+    useEffect(() => {
+        currentUserIdRef.current = options.currentUserId ?? null
+    }, [options.currentUserId])
 
     useEffect(() => {
         onErrorRef.current = options.onError
@@ -582,6 +591,28 @@ export function useSSE(options: {
             if (event.type === 'channel-member-added' || event.type === 'channel-member-removed') {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.channels })
                 void queryClient.invalidateQueries({ queryKey: queryKeys.channelMembers(event.channelId) })
+                // Stage 2 (round-5 fix): when the *current user* is removed
+                // from a channel, force-redirect to /channels so they're not
+                // stuck on a now-403 channel/thread page with stale data.
+                if (
+                    event.type === 'channel-member-removed'
+                    && currentUserIdRef.current != null
+                    && event.userId === currentUserIdRef.current
+                ) {
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.channelMessages(event.channelId) })
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.channelSessions(event.channelId) })
+                    // Hard redirect — we don't have router access here and
+                    // navigating away from a channel-bound thread page is the
+                    // safest UX; everything else (sidebar, channel list, etc.)
+                    // refreshes naturally. Only fire if we're actually on a
+                    // page tied to that channel to avoid yanking the user
+                    // when they're elsewhere.
+                    const onChannel = window.location.pathname.startsWith(`/channels/${event.channelId}`)
+                    const onSession = window.location.pathname.startsWith('/sessions/')
+                    if (onChannel || onSession) {
+                        window.location.replace('/channels')
+                    }
+                }
             }
 
             onEventRef.current(event)
