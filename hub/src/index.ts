@@ -24,6 +24,7 @@ import { PushNotificationChannel } from './push/pushNotificationChannel'
 import { VisibilityTracker } from './visibility/visibilityTracker'
 import { ChannelAgent } from './sync/channelAgent'
 import { EmbeddedRunner } from './web/embeddedRunner'
+import { AgentConfigStore } from './agentConfig/agentConfigStore'
 import { TunnelManager } from './tunnel'
 import { waitForTunnelTlsReady } from './tunnel/tlsGate'
 import QRCode from 'qrcode'
@@ -102,6 +103,7 @@ function mergeCorsOrigins(base: string[], extra: string[]): string[] {
 let syncEngine: SyncEngine | null = null
 let channelAgent: ChannelAgent | null = null
 let embeddedRunner: EmbeddedRunner | null = null
+let agentConfigStore: AgentConfigStore | null = null
 let happyBot: HappyBot | null = null
 let webServer: BunServer<WebSocketData> | null = null
 let sseManager: SSEManager | null = null
@@ -195,6 +197,11 @@ async function main() {
 
     syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager)
     channelAgent = new ChannelAgent(syncEngine)
+
+    // Stage 2: AgentConfig file storage + hot-reload
+    agentConfigStore = new AgentConfigStore()
+    syncEngine.attachAgentConfigStore(agentConfigStore)
+    agentConfigStore.startWatching()
 
     const notificationChannels: NotificationChannel[] = [
         new PushNotificationChannel(pushService, sseManager, visibilityTracker, config.publicUrl)
@@ -327,6 +334,7 @@ async function main() {
         await happyBot?.stop()
         notificationHub?.stop()
         await embeddedRunner?.stop()
+        agentConfigStore?.stopWatching()
         channelAgent?.stop()
         syncEngine?.stop()
         sseManager?.stop()

@@ -49,7 +49,13 @@ function createStoreSyncAdapter(store: Store) {
         updateThreadStatus: (sessionId: string, ns: string, status: 'active' | 'completed' | 'archived') =>
             store.sessions.setThreadStatus(sessionId, ns, status),
         getWorkspaceUser: (ns: string, userId: string) =>
-            store.workspaceUsers.getUser(ns, userId)
+            store.workspaceUsers.getUser(ns, userId),
+        getReactionsForMessages: (messageIds: string[]) =>
+            store.channelMessageReactions.getForMessages(messageIds),
+        toggleMessageReaction: (messageId: string, _channelId: string, _ns: string, reactorRef: string, emoji: string) =>
+            store.channelMessageReactions.toggle(messageId, reactorRef, emoji),
+        removeMessageReaction: (messageId: string, _channelId: string, _ns: string, reactorRef: string, emoji: string) =>
+            store.channelMessageReactions.remove(messageId, reactorRef, emoji)
     }
 }
 

@@ -57,6 +57,8 @@ export class SyncEngine {
     private readonly channelCache: ChannelCache
     private readonly messageService: MessageService
     private readonly rpcGateway: RpcGateway
+    private agentConfigStore: import('../agentConfig/agentConfigStore').AgentConfigStore | null = null
+    private agentConfigUnsub: (() => void) | null = null
     private inactivityTimer: NodeJS.Timeout | null = null
 
     constructor(
@@ -80,6 +82,32 @@ export class SyncEngine {
         this.rpcGateway = new RpcGateway(io, rpcRegistry)
         this.reloadAll()
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
+    }
+
+    /**
+     * Stage 2: attach an AgentConfigStore. When file changes are detected,
+     * the cached DB record is updated and a `__config_updated` system message
+     * is injected into the channel's bot session.
+     */
+    attachAgentConfigStore(store: import('../agentConfig/agentConfigStore').AgentConfigStore): void {
+        this.agentConfigStore = store
+        this.agentConfigUnsub?.()
+        this.agentConfigUnsub = store.subscribe((change) => {
+            // Find which namespace this channel belongs to and update its DB record.
+            const namespace = this.channelCache.getChannelNamespace(change.channelId)
+            if (!namespace) return
+            this.store.channels.updateChannel(change.channelId, namespace, { agentConfig: change.config })
+            this.channelCache.updateChannel(change.channelId, namespace)
+            // Inject __config_updated into the bot session if any
+            const refreshed = this.store.channels.getChannel(change.channelId, namespace)
+            const botSessionId = refreshed?.botSessionId
+            if (botSessionId) {
+                const text = `<system>__config_updated</system>\n${change.rawText}`
+                void this.sendMessage(botSessionId, { text, sentFrom: 'webapp' }).catch((err) => {
+                    console.error('[SyncEngine] inject __config_updated failed:', err)
+                })
+            }
+        })
     }
 
     stop(): void {
@@ -641,6 +669,14 @@ export class SyncEngine {
     ): StoredChannel {
         const channel = this.store.channels.createChannel(namespace, name, createdBy, description, agentConfig)
         this.channelCache.addChannel(channel)
+        // Stage 2: persist agentConfig to file too (if provided)
+        if (agentConfig && this.agentConfigStore) {
+            try {
+                this.agentConfigStore.write(channel.id, agentConfig)
+            } catch (err) {
+                console.error('[SyncEngine] write agentConfig file failed:', err)
+            }
+        }
         // Stage 2: auto-spawn channel bot if agentConfig is present.
         // Spawn is async; we don't block channel creation on it.
         if (agentConfig) {
@@ -960,6 +996,18 @@ export class SyncEngine {
         const updated = this.store.channels.updateChannel(channelId, namespace, updates)
         if (updated) {
             this.channelCache.updateChannel(channelId, namespace)
+            // Stage 2: mirror agentConfig to file storage so on-disk config stays in sync.
+            if (updates.agentConfig !== undefined && this.agentConfigStore) {
+                try {
+                    if (updates.agentConfig === null) {
+                        this.agentConfigStore.delete(channelId)
+                    } else {
+                        this.agentConfigStore.write(channelId, updates.agentConfig)
+                    }
+                } catch (err) {
+                    console.error('[SyncEngine] mirror agentConfig to file failed:', err)
+                }
+            }
         }
         return updated
     }
