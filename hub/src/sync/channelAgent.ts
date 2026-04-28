@@ -61,6 +61,8 @@ type WeakBuffer = {
 type ChannelContext = {
     botSessionId: string
     botName: string
+    /** Stage 2 §10: agentConfig.debounceMs override. Falls back to default. */
+    debounceMs: number
 }
 
 type ThreadFiredState = 'completed' | 'archived' | 'stalled'
@@ -167,10 +169,17 @@ export class ChannelAgent {
             // late-spawned bot gets picked up promptly.
             return null
         }
-        const cfg = channel.agentConfig as { botName?: string } | null
+        const cfg = channel.agentConfig as { botName?: string; debounceMs?: number } | null
+        // Stage 2 §10: clamp debounceMs to [500, 30000] to match the editor's
+        // bounds; ignore obviously bad values rather than DoS the bot session.
+        const rawDebounce = typeof cfg?.debounceMs === 'number' && Number.isFinite(cfg.debounceMs)
+            ? cfg.debounceMs
+            : WEAK_SIGNAL_DEBOUNCE_MS
+        const debounceMs = Math.max(500, Math.min(30_000, rawDebounce))
         const ctx: ChannelContext = {
             botSessionId: channel.botSessionId,
-            botName: cfg?.botName ?? 'Agent'
+            botName: cfg?.botName ?? 'Agent',
+            debounceMs
         }
         this.channelContextCache.set(channelId, ctx)
         return ctx
@@ -386,9 +395,11 @@ export class ChannelAgent {
         if (buf.pending.length >= WEAK_SIGNAL_FLUSH_THRESHOLD) {
             this.flushWeakBuffer(channelId, namespace, ctx)
         } else {
+            // Stage 2 §10: agentConfig.debounceMs override (per-channel),
+            // falls back to the default constant via getChannelContext.
             buf.timer = setTimeout(() => {
                 this.flushWeakBuffer(channelId, namespace, ctx)
-            }, WEAK_SIGNAL_DEBOUNCE_MS)
+            }, ctx.debounceMs)
         }
     }
 

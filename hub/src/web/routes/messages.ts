@@ -49,6 +49,17 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
         const sessionId = sessionResult.sessionId
 
+        // Stage 2 spec §4: bot sessions only accept hub-internal injects from
+        // the channel-message routing path (strong-signal mentions, weak-signal
+        // batches, __channel_initialized, __config_updated). The public REST
+        // endpoint must reject — otherwise any channel member could inject
+        // arbitrary text into the bot's transcript and bypass routing rules.
+        if (sessionResult.session.isChannelBot) {
+            return c.json({
+                error: 'Bot sessions do not accept direct messages. Send to the channel instead and the bot will be notified via strong/weak signal routing.'
+            }, 403)
+        }
+
         const body = await c.req.json().catch(() => null)
         const parsed = sendMessageBodySchema.safeParse(body)
         if (!parsed.success) {

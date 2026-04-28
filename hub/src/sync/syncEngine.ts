@@ -865,18 +865,33 @@ export class SyncEngine {
         const homeDir = process.env.HAPI_HOME ?? `${process.env.HOME ?? '/tmp'}/.hapi`
         const directory = `${homeDir}/workspaces/${namespace}/${safeChannelName}`
 
+        // Stage 2: honor the channel's agentConfig.permissionMode for spawned
+        // threads. mvp-ux-stage-2 §10 schema: 'yolo' | 'ask'. Map to the
+        // flavor-appropriate concrete mode. Without this every spawned thread
+        // got bypassPermissions regardless of the owner's "Ask" setting.
+        const cfg = (channel.agentConfig ?? null) as { permissionMode?: 'yolo' | 'ask' } | null
+        const cfgMode = cfg?.permissionMode ?? 'yolo'
+        const yolo = cfgMode === 'yolo'
+        let resolvedPermissionMode: PermissionMode | undefined
+        if (cfgMode === 'ask') {
+            // Claude's "ask" equivalent is its default (per-tool prompts);
+            // codex / gemini / opencode also accept 'default'. Cursor has a
+            // literal 'ask'.
+            resolvedPermissionMode = flavor === 'cursor' ? 'ask' : 'default'
+        }
+
         const result = await this.spawnSession(
             machine.id,
             directory,
             flavor,
             opts.model,
             undefined,
-            true, // yolo
+            yolo,
             undefined,
             undefined,
             undefined,
             undefined,
-            undefined,
+            resolvedPermissionMode,
             {
                 channelId,
                 scheduled: opts.scheduled,
