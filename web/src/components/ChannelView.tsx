@@ -239,7 +239,7 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                         style={{ color: 'var(--app-hint)' }}
                     >
                         <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--app-link)' }} />
-                        ✨ Agent is {botTypingAction}…
+                        ✨ {(channel.agentConfig as { botName?: string } | null | undefined)?.botName ?? 'Agent'} is {botTypingAction}…
                     </div>
                 )}
                 {sendError && (
