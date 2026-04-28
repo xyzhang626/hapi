@@ -567,6 +567,38 @@ export function setSessionPinned(
     return result.changes === 1
 }
 
+/**
+ * Stage 2 / R18-2: update `sessions.thread_title` directly. Used by the
+ * metadata-update path when a thread agent calls `mcp__hapi__change_title`,
+ * which lands as a `metadata.summary.text` change. We mirror the new title
+ * onto `sessions.thread_title` so channel-side renderers (timeline thread
+ * card, pinned chip strip header) reflect the rename live.
+ *
+ * Returns true when the row was updated; false if the session doesn't
+ * exist in this namespace, isn't a channel thread, or the title was
+ * already the same.
+ */
+export function setSessionThreadTitle(
+    db: Database,
+    sessionId: string,
+    namespace: string,
+    threadTitle: string
+): boolean {
+    const now = Date.now()
+    const result = db.prepare(
+        `UPDATE sessions SET thread_title = @thread_title, updated_at = @updated_at, seq = seq + 1
+         WHERE id = @id AND namespace = @namespace
+           AND channel_id IS NOT NULL
+           AND (thread_title IS NULL OR thread_title != @thread_title)`
+    ).run({
+        thread_title: threadTitle,
+        updated_at: now,
+        id: sessionId,
+        namespace
+    })
+    return result.changes === 1
+}
+
 export function setThreadVisibility(
     db: Database,
     sessionId: string,

@@ -182,6 +182,26 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         }
 
         if (result.result === 'success') {
+            // R18-2: when a thread agent calls mcp__hapi__change_title, the
+            // new title arrives here as `metadata.summary.text`. Mirror it
+            // onto `sessions.thread_title` so channel-side renderers
+            // (timeline thread card, pinned chip) reflect the rename live.
+            // No-ops for non-channel sessions (channel_id IS NOT NULL guard
+            // is in setSessionThreadTitle).
+            try {
+                const meta = metadata as { summary?: { text?: unknown } } | null
+                const summaryText = meta?.summary?.text
+                if (typeof summaryText === 'string' && summaryText.length > 0) {
+                    store.sessions.setSessionThreadTitle(
+                        sid,
+                        sessionAccess.value.namespace,
+                        summaryText
+                    )
+                }
+            } catch {
+                // best-effort; failures don't block the metadata update
+            }
+
             const update = {
                 id: randomUUID(),
                 seq: Date.now(),

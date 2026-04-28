@@ -24,6 +24,7 @@ import {
     setSessionPinned,
     setSessionTeamState,
     setSessionTodos,
+    setSessionThreadTitle,
     setThreadStatus,
     setThreadVisibility,
     touchSessionUpdatedAt,
@@ -166,6 +167,10 @@ export class SessionStore {
 
     setSessionPinned(sessionId: string, namespace: string, pinned: boolean): boolean {
         return setSessionPinned(this.db, sessionId, namespace, pinned)
+    }
+
+    setSessionThreadTitle(sessionId: string, namespace: string, threadTitle: string): boolean {
+        return setSessionThreadTitle(this.db, sessionId, namespace, threadTitle)
     }
 
     setThreadVisibility(sessionId: string, namespace: string, visibility: ThreadVisibility): boolean {
