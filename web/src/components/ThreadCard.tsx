@@ -10,6 +10,11 @@ export function ThreadCard({ data, kind, onOpen }: ThreadCardProps) {
     const startedBy = String(data.startedBy ?? '')
     const durationMs = typeof data.durationMs === 'number' ? data.durationMs : 0
     const todos = data.todos as { completed?: number; total?: number } | undefined
+    // R17: per spec §VII, shared threads get a more prominent visual treatment
+    // ("详细" card) vs private's minimal one. We carry `visibility` through from
+    // the live session so an after-the-fact "Share to channel" toggle re-renders
+    // the timeline card without re-issuing it.
+    const isShared = data.visibility === 'shared'
 
     const isCompleted = status === 'completed'
     const isFailed = status === 'failed'
@@ -37,20 +42,34 @@ export function ThreadCard({ data, kind, onOpen }: ThreadCardProps) {
             className="rounded-lg border p-3 cursor-pointer transition-colors"
             onClick={onOpen}
             style={{
-                borderColor: 'var(--app-border)',
-                background: 'var(--app-secondary-bg)',
+                borderColor: isShared ? '#6366f1' : 'var(--app-border)',
+                background: isShared
+                    ? 'linear-gradient(135deg, color-mix(in oklab, #6366f1 8%, var(--app-secondary-bg)), var(--app-secondary-bg))'
+                    : 'var(--app-secondary-bg)',
+                boxShadow: isShared ? '0 0 0 1px rgba(99, 102, 241, 0.25)' : undefined,
             }}
         >
             <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="font-medium text-sm truncate" style={{ color: 'var(--app-fg)' }}>
                     {taskTitle}
                 </span>
-                <span
-                    className="text-xs px-1.5 py-0.5 rounded-full font-medium flex-shrink-0"
-                    style={{ color: statusColor, background: `${statusColor}15` }}
-                >
-                    {statusLabel}
-                </span>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {isShared && (
+                        <span
+                            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                            style={{ color: '#6366f1', background: 'rgba(99, 102, 241, 0.12)' }}
+                            title="Shared with channel"
+                        >
+                            🔗 Shared
+                        </span>
+                    )}
+                    <span
+                        className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                        style={{ color: statusColor, background: `${statusColor}15` }}
+                    >
+                        {statusLabel}
+                    </span>
+                </div>
             </div>
             <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--app-hint)' }}>
                 {startedBy && <span>by {startedBy}</span>}

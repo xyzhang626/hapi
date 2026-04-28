@@ -363,6 +363,54 @@ html[data-theme="dark"] .shiki span {
   animation: bounce-in 0.3s ease-out;
 }
 
+/* Channel bot typing indicator — spec §XIII "脉动光晕" + "渐变文字" */
+@keyframes bot-typing-halo {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55);
+    opacity: 0.92;
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
+    opacity: 1;
+  }
+}
+
+@keyframes bot-typing-text-shimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
+.bot-typing-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+  color: white;
+  font-size: 0.75rem;
+  line-height: 1;
+  animation: bot-typing-halo 1.6s ease-in-out infinite;
+}
+
+.bot-typing-text {
+  background: linear-gradient(
+    90deg,
+    #6366f1 0%,
+    #a855f7 25%,
+    var(--app-fg, #1f2937) 50%,
+    #a855f7 75%,
+    #6366f1 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 500;
+  animation: bot-typing-text-shimmer 2.4s ease-in-out infinite;
+}
+
 /* ReactQueryDevtools button - move to middle-right to avoid blocking UI */
 .tsqd-open-btn-container {
   bottom: 50% !important;

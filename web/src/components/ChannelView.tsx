@@ -235,11 +235,12 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
             <div className="px-4 py-2 border-t" style={{ borderColor: 'var(--app-border)' }}>
                 {botTypingAction && (
                     <div
-                        className="text-xs mb-2 flex items-center gap-2 italic"
-                        style={{ color: 'var(--app-hint)' }}
+                        className="text-xs mb-2 flex items-center gap-2"
                     >
-                        <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--app-link)' }} />
-                        ✨ {(channel.agentConfig as { botName?: string } | null | undefined)?.botName ?? 'Agent'} is {botTypingAction}…
+                        <span className="bot-typing-glyph" aria-hidden="true">✨</span>
+                        <span className="bot-typing-text">
+                            {(channel.agentConfig as { botName?: string } | null | undefined)?.botName ?? 'Agent'} is {botTypingAction}…
+                        </span>
                     </div>
                 )}
                 {sendError && (
@@ -384,7 +385,18 @@ function ChannelMessageItem({
                 ?? (threadSession as Session & { createdByUserId?: string }).createdByUserId
                 ?? null)
             : null
-        const enrichedCard = friendlyStartedBy ? { ...cardData, startedBy: friendlyStartedBy } : cardData
+        // R17: spec §VII Share 升级路径 — when thread visibility flips to 'shared',
+        // upgrade the card visually (gradient bg, shared pill) AND surface the live
+        // `thread_title` (which thread agents may update via mcp__hapi__change_title)
+        // so the card reflects current action, not just the original title.
+        const liveTitle = (threadSession as Session | undefined)?.threadTitle
+        const liveVisibility = (threadSession as Session | undefined)?.visibility
+        const enrichedCard: Record<string, unknown> = {
+            ...cardData,
+            ...(friendlyStartedBy ? { startedBy: friendlyStartedBy } : {}),
+            ...(liveTitle ? { taskTitle: liveTitle } : {}),
+            ...(liveVisibility ? { visibility: liveVisibility } : {})
+        }
         return (
             <div className="group relative">
                 <ThreadCard
