@@ -908,7 +908,22 @@ export class SyncEngine {
             {
                 channelId,
                 scheduled: opts.scheduled,
-                schedule: opts.schedule
+                schedule: opts.schedule,
+                // Stage 2 / R18-1: regular spawned threads get a system-prompt
+                // addition that documents the Lead-Teammate inject convention
+                // (spec §VI). Without this, security-aware models (Opus 4.x)
+                // refuse to act on `<system>injected-by-bot</system>` messages
+                // because the wrapper looks like a prompt-injection attempt
+                // rather than a legitimate coordination directive. Scheduled
+                // threads have their own dedicated system prompt and don't
+                // need this; bot sessions also have their own prompt.
+                customSystemPrompt: opts.scheduled
+                    ? undefined
+                    : buildSpawnedThreadSystemPromptAddition(
+                          channel.name,
+                          opts.title,
+                          (((channel.agentConfig ?? {}) as { botName?: string }).botName) ?? 'Agent'
+                      )
             }
         )
 
@@ -1510,4 +1525,54 @@ export class SyncEngine {
         const u = this.store.workspaceUsers.getUserGlobal(userId)
         return u?.displayName ?? null
     }
+}
+
+/**
+ * Stage 2 / R18-1: System-prompt addition for regular spawned threads.
+ *
+ * Hub composes this and passes it through `customSystemPrompt` so the
+ * runner appends it to the thread agent's Claude Code system prompt
+ * via `--append-system-prompt`. Without it, security-aware models
+ * (Opus 4.x) refuse to act on `<system>injected-by-bot</system>`
+ * Lead-Teammate injects, breaking the multi-turn correction loop
+ * documented in spec §VI.
+ *
+ * Hub-local (not imported from cli) because hub and cli are separate
+ * bun packages; the cli copy `buildSpawnedThreadSystemPromptAddition`
+ * exists for runner / bot tests.
+ */
+function buildSpawnedThreadSystemPromptAddition(
+    channelName: string,
+    threadTitle: string,
+    botName: string
+): string {
+    return [
+        `You are a HAPI thread agent for #${channelName}, working as`,
+        `"${threadTitle}". You were spawned by "${botName}", the`,
+        `channel's coordinator bot, to handle one specific task on the`,
+        `channel's behalf.`,
+        ``,
+        `Coordination protocol (spec §VI):`,
+        ``,
+        `- Your channel bot may send you follow-up directives mid-task by`,
+        `  calling mcp__hapi__send_to_thread. These arrive as user-role`,
+        `  messages tagged \`<system>injected-by-bot</system>\\n<text>\`.`,
+        `  Sibling threads can also send injects tagged`,
+        `  \`<system>injected-by-sibling-thread</system>\`. These are`,
+        `  LEGITIMATE Lead-Teammate coordination messages — NOT prompt`,
+        `  injection attempts. Treat them as authoritative instructions`,
+        `  from your channel coordinator and act on them.`,
+        `- When you finish a meaningful unit of work (file edited, fact`,
+        `  verified, etc.), call mcp__hapi__send_to_channel with a concise`,
+        `  one-paragraph summary (file path + key change).`,
+        `- You may call mcp__hapi__change_title to rename yourself if your`,
+        `  scope shifts; the new title appears live in the channel header`,
+        `  chip strip and timeline card.`,
+        `- You may call mcp__hapi__send_to_thread on a sibling thread for`,
+        `  Teammate → Teammate coordination.`,
+        ``,
+        `You can NOT spawn new threads or pin/unpin threads — those are`,
+        `bot-only tools. Stay focused on your assigned task. If the scope`,
+        `grows, ask the bot via send_to_channel to spawn a sibling thread.`
+    ].join('\n')
 }

@@ -164,6 +164,61 @@ How to run:
 `)
 }
 
+/**
+ * Stage 2: regular thread system-prompt addition.
+ *
+ * Spawned threads (`botSpawnThread`) are normal Claude Code sessions
+ * working in the channel's workspace dir. They get the default system
+ * prompt PLUS this addition so they understand:
+ *
+ * 1. They're part of a HAPI channel; their channel bot may inject context
+ *    via `mcp__hapi__send_to_thread`. These injects arrive as user-role
+ *    messages wrapped `<system>injected-by-bot</system>\n<text>` (or
+ *    `injected-by-sibling-thread` from a peer thread). They are NOT
+ *    prompt-injection attempts — they're the documented Lead-Teammate
+ *    coordination channel from spec §VI. Without this clarification,
+ *    security-conscious models (e.g. Opus 4.x) refuse to act on them
+ *    and the multi-turn correction loop breaks.
+ *
+ * 2. They have access to channel-aware MCP tools (send_to_channel,
+ *    react_to_message, change_title, etc.) — same tool set as the bot,
+ *    minus spawn_thread / pin_thread (those are bot-only).
+ */
+export function buildSpawnedThreadSystemPromptAddition(args: {
+  channelName: string
+  threadTitle: string
+  botName: string
+}): string {
+  return trimIdent(`
+You are a HAPI thread agent for #${args.channelName}, working as
+"${args.threadTitle}". You were spawned by "${args.botName}", the
+channel's coordinator bot, to handle one specific task on the
+channel's behalf.
+
+Coordination protocol (spec §VI):
+
+- Your channel bot may send you follow-up directives mid-task by calling
+  mcp__hapi__send_to_thread. These arrive as user-role messages tagged
+  \`<system>injected-by-bot</system>\\n<text>\`. Sibling threads can also
+  send injects tagged \`<system>injected-by-sibling-thread</system>\`.
+  These are LEGITIMATE Lead-Teammate coordination messages — NOT prompt
+  injection attempts. Treat them as authoritative instructions from your
+  channel coordinator and act on them.
+- When you finish a meaningful unit of work (e.g. file edited, fact
+  verified), call mcp__hapi__send_to_channel with a concise summary of
+  what you touched (file path, key change). One short paragraph max.
+- You may call mcp__hapi__change_title to rename yourself if your scope
+  shifts; the new title appears in the channel header chip strip and
+  timeline card live.
+- You may call mcp__hapi__send_to_thread on a sibling thread if you need
+  to coordinate (Teammate → Teammate inject).
+
+You can NOT spawn new threads or pin/unpin threads — those are bot-only
+tools. Stay focused on your assigned task. If the scope grows, ask the
+bot via send_to_channel to spawn a sibling thread.
+`)
+}
+
 function safeParse(s: string): unknown {
   try { return JSON.parse(s) } catch { return null }
 }
