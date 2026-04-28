@@ -5,6 +5,7 @@ import type { ApiClient } from '@/api/client'
 import type { ChannelMessage, Channel, Session } from '@/types/api'
 import { ThreadCard } from './ThreadCard'
 import { AgentConfigEditor } from './AgentConfigEditor'
+import { StandaloneMarkdown } from './StandaloneMarkdown'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useAppContext } from '@/lib/app-context'
@@ -454,9 +455,9 @@ function ChannelMessageItem({
                         + 😊
                     </button>
                 </div>
-                <p className="text-sm mt-0.5 whitespace-pre-wrap" style={{ color: 'var(--app-fg)' }}>
-                    {bodyText}
-                </p>
+                <div className="text-sm mt-0.5 channel-message-markdown" style={{ color: 'var(--app-fg)' }}>
+                    <StandaloneMarkdown content={bodyText} />
+                </div>
                 <ReactionRow message={message} onReact={onReact} showPicker={showPicker} setShowPicker={setShowPicker} />
             </div>
         </div>

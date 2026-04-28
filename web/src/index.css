@@ -223,6 +223,17 @@ body {
 .markdown-content table { border-collapse: collapse; width: 100%; }
 .markdown-content th, .markdown-content td { border: 1px solid var(--app-border); padding: 0.25rem 0.5rem; }
 
+/* Channel-message markdown — tighter than session/thread message markdown
+   since channel timeline rows are denser. Removes leading/trailing margins
+   so a single-paragraph message reads inline; multi-line content gets
+   normal block spacing in the middle. */
+.channel-message-markdown .aui-md {
+    font-size: 0.875rem;
+    line-height: 1.45;
+}
+.channel-message-markdown .aui-md > :first-child { margin-top: 0; }
+.channel-message-markdown .aui-md > :last-child { margin-bottom: 0; }
+
 .aui-md-codeblock pre.shiki {
     margin: 0;
     padding: 0.5rem;
