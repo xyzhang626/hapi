@@ -717,6 +717,10 @@ export class SyncEngine {
         return this.store.workspaceUsers.isPersonalChannel(channelId)
     }
 
+    getPersonalChannelId(namespace: string, userId: string): string | null {
+        return this.store.workspaceUsers.getPersonalChannelId(namespace, userId)
+    }
+
     createChannel(
         namespace: string,
         name: string,
@@ -1338,9 +1342,31 @@ export class SyncEngine {
         userId: string,
         displayName: string
     ): { personalChannel: { id: string; name: string }; generalChannel: { id: string; name: string } } {
-        const result = this.store.workspaceUsers.ensureDefaults(namespace, userId, displayName)
+        // Spec (mvp-user-experience.md): default channels (#general + #private)
+        // each get an AI project-manager agent. Without an agentConfig the
+        // channel comes up bot-less and @mention is a no-op, "+ New thread"
+        // is disabled. Pass a minimal Claude default — channelAgent /
+        // spawnChannelBot fill in the rest.
+        const defaultAgentConfig = {
+            flavor: 'claude',
+            botName: 'Agent',
+            permissionMode: 'yolo'
+        }
+        const result = this.store.workspaceUsers.ensureDefaults(namespace, userId, displayName, defaultAgentConfig)
         this.channelCache.reloadAll()
-        return result
+        // Spawn the channel bot for any channel that was just created. The
+        // store layer wrote the agentConfig but didn't trigger spawn (it's
+        // pure SQL); spawn is the engine's responsibility.
+        for (const ch of [result.personalChannel, result.generalChannel]) {
+            if (!ch.created) continue
+            void this.spawnChannelBot(ch.id, namespace).catch((err) => {
+                console.error(`[SyncEngine] ensureWorkspaceDefaults: bot spawn failed for ${ch.id}:`, err)
+            })
+        }
+        return {
+            personalChannel: { id: result.personalChannel.id, name: result.personalChannel.name },
+            generalChannel: { id: result.generalChannel.id, name: result.generalChannel.name }
+        }
     }
 
     attachSessionToChannel(

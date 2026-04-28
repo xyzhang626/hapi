@@ -118,12 +118,19 @@ export function isPersonalChannel(db: Database, channelId: string): boolean {
     return row !== null
 }
 
+export type EnsureDefaultsResult = {
+    personalChannel: { id: string; name: string; created: boolean }
+    generalChannel: { id: string; name: string; created: boolean }
+}
+
 export function ensureDefaults(
     db: Database,
     namespace: string,
     userId: string,
-    displayName: string
-): { personalChannel: { id: string; name: string }; generalChannel: { id: string; name: string } } {
+    displayName: string,
+    defaultAgentConfig?: unknown
+): EnsureDefaultsResult {
+    void displayName
     db.exec('BEGIN')
     try {
         // Only set displayName on first creation; subsequent calls just touch last_active_at
@@ -138,8 +145,10 @@ export function ensureDefaults(
         }
 
         let generalChannel = getChannelByName(db, namespace, 'general')
+        let generalCreated = false
         if (!generalChannel) {
-            generalChannel = createChannel(db, namespace, 'general', userId)
+            generalChannel = createChannel(db, namespace, 'general', userId, undefined, defaultAgentConfig)
+            generalCreated = true
         }
         addMember(db, generalChannel.id, userId, 'member')
 
@@ -152,19 +161,22 @@ export function ensureDefaults(
             }
             db.exec('COMMIT')
             return {
-                personalChannel: { id: existing.id, name: existing.name },
-                generalChannel: { id: generalChannel.id, name: generalChannel.name }
+                personalChannel: { id: existing.id, name: existing.name, created: false },
+                generalChannel: { id: generalChannel.id, name: generalChannel.name, created: generalCreated }
             }
         }
 
-        const personalChannel = createChannel(db, namespace, `${displayName}'s space`, userId)
+        // Spec: each user's personal channel is literally named "private". Multiple
+        // users in the same workspace each have their own row named "private";
+        // membership joins ensure they only see their own.
+        const personalChannel = createChannel(db, namespace, 'private', userId, undefined, defaultAgentConfig)
         addMember(db, personalChannel.id, userId, 'owner')
         setPersonalChannel(db, namespace, userId, personalChannel.id)
 
         db.exec('COMMIT')
         return {
-            personalChannel: { id: personalChannel.id, name: personalChannel.name },
-            generalChannel: { id: generalChannel.id, name: generalChannel.name }
+            personalChannel: { id: personalChannel.id, name: personalChannel.name, created: true },
+            generalChannel: { id: generalChannel.id, name: generalChannel.name, created: generalCreated }
         }
     } catch (error) {
         db.exec('ROLLBACK')

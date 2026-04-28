@@ -391,7 +391,7 @@ describe('channels E2E', () => {
             expect(res.status).toBe(200)
             const data = await res.json() as any
             expect(data.generalChannel.name).toBe('general')
-            expect(data.personalChannel.name).toBe("Alice's space")
+            expect(data.personalChannel.name).toBe('private')
 
             // Both channels should appear in the user's channel list
             const listRes = await app.request('/api/channels')
@@ -399,7 +399,7 @@ describe('channels E2E', () => {
             const { channels } = await listRes.json() as any
             expect(channels).toHaveLength(2)
             const names = channels.map((ch: any) => ch.name).sort()
-            expect(names).toEqual(["Alice's space", 'general'])
+            expect(names).toEqual(['general', 'private'])
         })
 
         it('ensureDefaults is idempotent', async () => {
@@ -437,19 +437,22 @@ describe('channels E2E', () => {
 
             // Different personal channels
             expect(d1.personalChannel.id).not.toBe(d2.personalChannel.id)
-            expect(d1.personalChannel.name).toBe("Alice's space")
-            expect(d2.personalChannel.name).toBe("Bob's space")
+            // Both named literally "private" — multiple users in the same
+            // workspace each get their own row named "private"; channel
+            // membership ensures they only see their own.
+            expect(d1.personalChannel.name).toBe('private')
+            expect(d2.personalChannel.name).toBe('private')
 
             // Alice sees general + her personal + Bob's personal is NOT visible to her
             // (Alice is a member of general and her personal; Bob's personal has Bob as member)
             const aliceList = await app.request('/api/channels')
             const { channels: aliceChannels } = await aliceList.json() as any
-            // Alice is member of: general (added by her ensureDefaults), Alice's space
+            // Alice is member of: general (added by her ensureDefaults), her own private
             // Bob's ensureDefaults also adds Bob to general, but Alice was already a member
             // Alice is NOT added to Bob's personal channel
             expect(aliceChannels).toHaveLength(2)
             const aliceNames = aliceChannels.map((ch: any) => ch.name).sort()
-            expect(aliceNames).toEqual(["Alice's space", 'general'])
+            expect(aliceNames).toEqual(['general', 'private'])
         })
     })
 

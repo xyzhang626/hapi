@@ -250,7 +250,7 @@ describe('WorkspaceUserStore', () => {
         const result = store.workspaceUsers.ensureDefaults('ns1', 'alice', 'Alice')
 
         expect(result.generalChannel.name).toBe('general')
-        expect(result.personalChannel.name).toBe("Alice's space")
+        expect(result.personalChannel.name).toBe('private')
 
         // Alice is member of both
         expect(store.channels.isMember(result.generalChannel.id, 'alice')).toBe(true)

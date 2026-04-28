@@ -407,7 +407,7 @@ describe('channels server E2E (real HTTP)', () => {
             expect(res.status).toBe(200)
             const data = await res.json() as any
             expect(data.generalChannel.name).toBe('general')
-            expect(data.personalChannel.name).toBe("Alice's space")
+            expect(data.personalChannel.name).toBe('private')
 
             // Both visible in channel list
             const listRes = await fetch(`${baseUrl}/api/channels`, {
@@ -416,7 +416,7 @@ describe('channels server E2E (real HTTP)', () => {
             const { channels } = await listRes.json() as any
             const names = channels.map((ch: any) => ch.name).sort()
             expect(names).toContain('general')
-            expect(names).toContain("Alice's space")
+            expect(names).toContain('private')
 
             // Personal channel cannot be deleted
             const delRes = await fetch(`${baseUrl}/api/channels/${data.personalChannel.id}`, {

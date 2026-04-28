@@ -8,7 +8,8 @@ import {
     getUserGlobal,
     isPersonalChannel,
     setPersonalChannel,
-    upsertUser
+    upsertUser,
+    type EnsureDefaultsResult
 } from './workspaceUsers'
 
 export class WorkspaceUserStore {
@@ -46,8 +47,9 @@ export class WorkspaceUserStore {
     ensureDefaults(
         namespace: string,
         userId: string,
-        displayName: string
-    ): { personalChannel: { id: string; name: string }; generalChannel: { id: string; name: string } } {
-        return ensureDefaults(this.db, namespace, userId, displayName)
+        displayName: string,
+        defaultAgentConfig?: unknown
+    ): EnsureDefaultsResult {
+        return ensureDefaults(this.db, namespace, userId, displayName, defaultAgentConfig)
     }
 }
