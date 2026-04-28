@@ -326,4 +326,45 @@ describe('ChannelAgent (Stage 2 router)', () => {
         // contain bare <system> open tags).
         expect(sent.indexOf('<system>', sent.indexOf('</system>'))).toBe(-1)
     })
+
+    // R11-1 regression: spec §V "User 加 reaction → 进 bot 的弱信号 buffer
+    // (debounce)". Before the fix, ChannelAgent.handleEvent only listened
+    // for channel-message-received / session-updated /
+    // channel-thread-requested / channel-updated — reaction events were
+    // silently dropped, so the bot never saw user reactions.
+    it('R11-1: user reaction event enters weak-signal buffer + flushes after debounce', async () => {
+        const engine = makeEngine()
+        agent = new ChannelAgent(engine as any)
+        engine.fire({
+            type: 'message-reaction-added',
+            channelId: 'channel-1',
+            namespace: 'ns1',
+            messageId: 'msg-1',
+            reactorRef: 'user:42',
+            emoji: '👀'
+        } as SyncEvent)
+        expect(engine.sendCalls).toHaveLength(0) // 1 reaction → wait for debounce
+        await new Promise((r) => setTimeout(r, 3100))
+        expect(engine.sendCalls).toHaveLength(1)
+        const sent = engine.sendCalls[0].text
+        expect(sent).toContain('<system>weak-signal-batch')
+        expect(sent).toContain('reacted 👀 on msgId=msg-1')
+        expect(sent).toContain('[42 |') // reactor's userId rendered (stripped 'user:')
+    }, 5000)
+
+    // R11-1 spec §IX: "Bot 加 reaction → **不**反馈给 bot 自己 (避免自激)".
+    it("R11-1: bot's own reaction does NOT enter weak-signal buffer (no feedback loop)", async () => {
+        const engine = makeEngine()
+        agent = new ChannelAgent(engine as any)
+        engine.fire({
+            type: 'message-reaction-added',
+            channelId: 'channel-1',
+            namespace: 'ns1',
+            messageId: 'msg-1',
+            reactorRef: 'bot:bot-session-1',
+            emoji: '👍'
+        } as SyncEvent)
+        await new Promise((r) => setTimeout(r, 3100))
+        expect(engine.sendCalls).toHaveLength(0)
+    }, 5000)
 })

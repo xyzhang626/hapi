@@ -132,7 +132,47 @@ export class ChannelAgent {
             // match. Drop the cached ChannelContext so the next lookup
             // re-reads the fresh agentConfig.
             this.invalidateChannelContext(event.channelId)
+        } else if (event.type === 'message-reaction-added' || event.type === 'message-reaction-removed') {
+            this.handleReaction(event)
         }
+    }
+
+    /**
+     * Stage 2 §V: "User 加 reaction → 进 bot 的弱信号 buffer (debounce)".
+     * Per §IX, bot's own reactions are NOT fed back (avoid self-excitation).
+     * Synthesize a text-shaped weak-signal entry so the existing
+     * `flushWeakBuffer` formatter handles the inject without special-casing.
+     */
+    private handleReaction(
+        event: Extract<SyncEvent, { type: 'message-reaction-added' | 'message-reaction-removed' }>
+    ): void {
+        const namespace = event.namespace ?? ''
+        if (!namespace) return
+        // Skip bot's own reactions to avoid feedback loop.
+        if (event.reactorRef.startsWith('bot:')) return
+        const ctx = this.getChannelContext(event.channelId, namespace)
+        if (!ctx) return
+        const reactorUserId = event.reactorRef.startsWith('user:')
+            ? event.reactorRef.slice('user:'.length)
+            : event.reactorRef
+        const verb = event.type === 'message-reaction-added' ? 'reacted' : 'un-reacted'
+        const text = `${verb} ${event.emoji} on msgId=${event.messageId}`
+        // Reuse the same enqueue path as text messages — same debounce, same
+        // format. Use messageId+emoji as a synthetic id so re-toggling within
+        // a single batch produces two distinct entries (the bot can see the
+        // toggle).
+        this.enqueueWeakSignal(
+            event.channelId,
+            namespace,
+            ctx,
+            {
+                id: `${event.messageId}:${event.emoji}:${verb}:${Date.now()}`,
+                authorUserId: reactorUserId,
+                seq: 0,
+                createdAt: Date.now()
+            },
+            text
+        )
     }
 
     private handleThreadRequested(event: Extract<SyncEvent, { type: 'channel-thread-requested' }>): void {
