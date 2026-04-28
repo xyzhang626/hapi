@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
+import { createHash } from 'node:crypto'
 import { PROTOCOL_VERSION } from '@hapi/protocol'
 import { configuration } from '../../configuration'
 import { constantTimeEquals } from '../../utils/crypto'
@@ -31,6 +32,10 @@ const getMessagesQuerySchema = z.object({
 type CliEnv = {
     Variables: {
         namespace: string
+        /** Derived from sha256(namespace:displayName) when the access
+         *  token includes a displayName segment. Used to auto-attach
+         *  vanilla CLI sessions to the user's personal channel. */
+        cliUserId: string | null
     }
 }
 
@@ -100,6 +105,20 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
         }
 
         c.set('namespace', parsedToken.namespace)
+        // Derive a stable per-user id when the token includes a displayName
+        // (token format: <token>:<namespace>:<displayName>). Mirrors the
+        // derivation in hub/src/web/routes/auth.ts so the CLI userId matches
+        // the web userId for the same human, allowing channel attribution
+        // and personal-channel auto-attach to work.
+        if (parsedToken.displayName) {
+            const uid = createHash('sha256')
+                .update(`${parsedToken.namespace}:${parsedToken.displayName}`)
+                .digest()
+                .readUInt32BE(0)
+            c.set('cliUserId', String(uid))
+        } else {
+            c.set('cliUserId', null)
+        }
         return await next()
     })
 
@@ -130,7 +149,15 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
             }
             | null
             | undefined
-        const channelOpts = meta && typeof meta === 'object' ? {
+        type ChannelOpts = {
+            channelId?: string
+            threadTitle?: string
+            createdByUserId?: string
+            isChannelBot?: boolean
+            scheduled?: boolean
+            schedule?: string
+        }
+        let channelOpts: ChannelOpts | undefined = meta && typeof meta === 'object' ? {
             channelId: typeof meta.channelId === 'string' ? meta.channelId : undefined,
             threadTitle: typeof meta.threadTitle === 'string' ? meta.threadTitle : undefined,
             createdByUserId: typeof meta.createdByUserId === 'string' ? meta.createdByUserId : undefined,
@@ -140,6 +167,34 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
         } : undefined
 
         const callerNamespace = c.get('namespace')
+        const cliUserId = c.get('cliUserId')
+
+        // Spec mvp-user-experience.md: vanilla CLI sessions auto-land in the
+        // owner's #private channel as thread cards. Without this, `hapi run`
+        // produces sessions with channel_id=NULL that are invisible from the
+        // /channels view. Skip when channelId is already set (the embedded
+        // runner spawning channel bots/threads passes its own) or when this
+        // is a channel-bot session (those live attached but never on behalf
+        // of a real user).
+        let autoAttachedToPersonal = false
+        if (
+            !channelOpts?.channelId
+            && !channelOpts?.isChannelBot
+            && cliUserId
+        ) {
+            const personalId = engine.getPersonalChannelId(callerNamespace, cliUserId)
+            if (personalId) {
+                const tag = parsed.data.tag
+                channelOpts = {
+                    ...(channelOpts ?? {}),
+                    channelId: personalId,
+                    threadTitle: channelOpts?.threadTitle ?? tag,
+                    createdByUserId: channelOpts?.createdByUserId ?? cliUserId
+                }
+                autoAttachedToPersonal = true
+            }
+        }
+
         // Stage 2: when this session is bound to a channel (bot or thread),
         // it must live in the channel's namespace — not the runner's. The
         // embedded runner authenticates as 'default'; without this remap a
@@ -163,6 +218,39 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
             parsed.data.modelReasoningEffort,
             channelOpts
         )
+
+        // Auto-emit the thread_card on FIRST attach to the personal channel
+        // (subsequent POSTs with the same tag are idempotent loads — no
+        // duplicate card). Detect first attach by checking if the session's
+        // current channelId was newly set this call.
+        if (autoAttachedToPersonal && channelOpts?.channelId) {
+            const existingCards = engine.getChannelMessages(channelOpts.channelId, { limit: 200 })
+            const alreadyEmitted = existingCards.some((m) => {
+                if (m.kind !== 'thread_card') return false
+                const body = m.body as { threadId?: string } | null
+                return body?.threadId === session.id
+            })
+            if (!alreadyEmitted) {
+                engine.sendChannelMessage(
+                    channelOpts.channelId,
+                    namespace,
+                    null,
+                    'thread_card',
+                    {
+                        status: 'active',
+                        taskTitle: channelOpts.threadTitle,
+                        threadId: session.id,
+                        startedAt: Date.now(),
+                        startedBy: cliUserId,
+                        scheduled: false,
+                        schedule: null,
+                        visibility: 'private'
+                    },
+                    session.id
+                )
+            }
+        }
+
         return c.json({ session })
     })
 

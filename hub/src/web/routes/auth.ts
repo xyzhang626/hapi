@@ -97,7 +97,8 @@ export function createAuthRoutes(
                 id: userId,
                 username,
                 firstName,
-                lastName
+                lastName,
+                namespace
             }
         })
     })
