@@ -1193,11 +1193,20 @@ export class SyncEngine {
             // the channel has no bot session yet, spawn one. Without this, the
             // AgentConfigEditor's "Save" on a previously-bot-less channel would
             // silently leave the user stuck — file written, no bot ever appears.
+            //
+            // R15-1: also handle the recovery case — channel HAD agentConfig but
+            // the initial spawn failed (e.g. embedded runner crashed before the
+            // RPC handler registered) so botSessionId is still NULL. Re-PUTting
+            // the same agentConfig should retry the spawn. The spawn-on-first-add
+            // path requires hadConfig=false; for the retry path, hadBot=false +
+            // hasConfig=true is enough.
             const hadConfig = before?.agentConfig != null
             const hasConfig = updates.agentConfig != null && updates.agentConfig !== undefined
             const hadBot = before?.botSessionId != null
-            if (!hadConfig && hasConfig && !hadBot) {
-                console.log(`[SyncEngine] agentConfig added to channel ${channelId} — spawning bot`)
+            const isFirstAdd = !hadConfig && hasConfig
+            const isOrphanedRetry = hadConfig && hasConfig && !hadBot
+            if ((isFirstAdd || isOrphanedRetry) && !hadBot) {
+                console.log(`[SyncEngine] ${isFirstAdd ? 'agentConfig added to' : 'orphaned channel — retrying spawn for'} ${channelId}`)
                 void this.spawnChannelBot(channelId, namespace).catch((err) => {
                     console.error('[SyncEngine] auto-spawn after agentConfig set failed:', err)
                 })
