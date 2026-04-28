@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { useAppContext } from '@/lib/app-context'
 import { queryKeys } from '@/lib/query-keys'
+import { useLongPress } from '@/hooks/useLongPress'
 
 const QUICK_EMOJIS = ['👀', '👍', '🙏', '🤔', '✅', '⏳', '😅']
 
@@ -188,18 +189,20 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                 {pinnedThreads.length > 0 && (
                     <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
                         {pinnedThreads.map((s) => (
-                            <button
+                            <PinnedThreadChip
                                 key={s.id}
-                                onClick={() => onOpenThread(s.id)}
-                                className="text-xs px-2 py-1 rounded-full whitespace-nowrap"
-                                style={{
-                                    background: 'var(--app-subtle-bg)',
-                                    color: 'var(--app-fg)',
-                                    border: '1px solid var(--app-border)'
+                                session={s}
+                                isOwner={isOwner}
+                                onOpen={() => onOpenThread(s.id)}
+                                onUnpin={async () => {
+                                    try {
+                                        await api.setThreadPinned(s.id, false)
+                                        onRefresh()
+                                    } catch (err) {
+                                        console.error('unpin failed:', err)
+                                    }
                                 }}
-                            >
-                                {(s as any).scheduled ? '⏰' : '📌'} {s.threadTitle ?? 'thread'}
-                            </button>
+                            />
                         ))}
                     </div>
                 )}
@@ -564,4 +567,81 @@ function tryParseText(s: string): string {
 function formatTime(ts: number): string {
     const d = new Date(ts)
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+/**
+ * R18-3: Pinned thread chip with owner long-press / right-click → unpin menu.
+ * Spec §III line 114: "Owner 长按 → 弹出 unpin 菜单". The chip itself
+ * navigates to the thread on regular click; the unpin menu only renders for
+ * the channel owner. Scheduled-thread chips show ⏰; manual-pin chips show 📌
+ * (per spec §XIII).
+ */
+function PinnedThreadChip({
+    session,
+    isOwner,
+    onOpen,
+    onUnpin,
+}: {
+    session: Session
+    isOwner: boolean
+    onOpen: () => void
+    onUnpin: () => void
+}) {
+    const [menuOpen, setMenuOpen] = useState(false)
+    const longPressHandlers = useLongPress({
+        onLongPress: () => {
+            if (isOwner) setMenuOpen(true)
+        },
+        onClick: onOpen,
+        disabled: !isOwner, // non-owners just get a normal click; no menu
+    })
+
+    // Close on outside click / Escape
+    useEffect(() => {
+        if (!menuOpen) return
+        const onDocClick = () => setMenuOpen(false)
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
+        document.addEventListener('click', onDocClick)
+        document.addEventListener('keydown', onKey)
+        return () => {
+            document.removeEventListener('click', onDocClick)
+            document.removeEventListener('keydown', onKey)
+        }
+    }, [menuOpen])
+
+    return (
+        <div className="relative">
+            <button
+                {...(isOwner ? longPressHandlers : { onClick: onOpen })}
+                className="text-xs px-2 py-1 rounded-full whitespace-nowrap"
+                style={{
+                    background: 'var(--app-subtle-bg)',
+                    color: 'var(--app-fg)',
+                    border: '1px solid var(--app-border)'
+                }}
+                title={isOwner ? 'Click to open thread, long-press / right-click to unpin' : 'Open thread'}
+            >
+                {(session as Session & { scheduled?: boolean }).scheduled ? '⏰' : '📌'} {session.threadTitle ?? 'thread'}
+            </button>
+            {menuOpen && isOwner && (
+                <div
+                    className="absolute top-full left-0 mt-1 z-10 rounded-md shadow-lg overflow-hidden animate-menu-pop"
+                    style={{
+                        background: 'var(--app-bg)',
+                        border: '1px solid var(--app-border)',
+                        minWidth: '160px',
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <button
+                        onClick={() => { setMenuOpen(false); onUnpin() }}
+                        className="w-full text-left text-xs px-3 py-2 hover:bg-[var(--app-subtle-bg)]"
+                        style={{ color: 'var(--app-fg)' }}
+                    >
+                        📍 Unpin from header
+                    </button>
+                </div>
+            )}
+        </div>
+    )
 }
