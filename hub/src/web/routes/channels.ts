@@ -53,6 +53,18 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         if (!body || !body.name || typeof body.name !== 'string') {
             return c.json({ error: 'name is required' }, 400)
         }
+        // Stage 2: reject duplicate channel names within the same namespace.
+        // Without this two `# paper-cvpr-25` rows can coexist with different
+        // ids — sidebar shows two indistinguishable buttons, the workspace
+        // folder collides at `~/.hapi/workspaces/<ns>/<name>/`, and the bot's
+        // system prompt references an ambiguous channel.
+        const existing = engine.getChannelByName(namespace, body.name.trim())
+        if (existing) {
+            return c.json({
+                error: `Channel name "${body.name.trim()}" already exists in this workspace`,
+                existingChannelId: existing.id
+            }, 409)
+        }
         const channel = engine.createChannel(namespace, body.name, userId, body.description, body.agentConfig)
         const memberAdded = engine.addChannelMember(channel.id, userId, 'owner')
         if (!memberAdded) throw new Error(`Failed to add creator as owner of channel ${channel.id}`)

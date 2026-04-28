@@ -13,6 +13,7 @@ function createStoreSyncAdapter(store: Store) {
         getChannelsForUser: (ns: string, userId: string) => store.channels.getChannelsForUser(ns, userId),
         getChannel: (id: string, ns: string) => store.channels.getChannel(id, ns),
         getChannelById: (id: string) => store.channels.getChannelById(id),
+        getChannelByName: (ns: string, name: string) => store.channels.getChannelByName(ns, name),
         isChannelMember: (id: string, userId: string) => store.channels.isMember(id, userId),
         isPersonalChannel: (id: string) => store.workspaceUsers.isPersonalChannel(id),
         createChannel: (ns: string, name: string, createdBy: string, desc?: string, agentConfig?: unknown) =>

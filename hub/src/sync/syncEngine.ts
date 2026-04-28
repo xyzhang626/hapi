@@ -691,6 +691,15 @@ export class SyncEngine {
         return this.channelCache.getChannel(channelId, namespace)
     }
 
+    /** Stage 2: lookup a channel by name within a namespace. Used by the
+     *  create-channel route to reject duplicate names — without this two
+     *  channels with the same name can coexist in the same workspace, the
+     *  sidebar shows two indistinguishable buttons, and the on-disk
+     *  workspace folder collides at `~/.hapi/workspaces/<ns>/<name>/`. */
+    getChannelByName(namespace: string, name: string): StoredChannel | null {
+        return this.store.channels.getChannelByName(namespace, name)
+    }
+
     /** Look up a channel by id without a namespace filter. Used by Stage 2
      *  paths that only have the channelId — e.g. CLI POST /sessions remapping
      *  bot/thread sessions to the channel's namespace, or the channel-bot
