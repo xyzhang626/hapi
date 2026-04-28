@@ -83,6 +83,9 @@ export type AuthResponse = {
         username?: string
         firstName?: string
         lastName?: string
+        /** Workspace namespace this user authenticated into. Drives the
+         *  sidebar workspace title and any namespace-aware routing. */
+        namespace?: string
     }
 }
 

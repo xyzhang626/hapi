@@ -24,4 +24,5 @@ export const queryKeys = {
     channelMembers: (channelId: string) => ['channel-members', channelId] as const,
     channelBotTyping: (channelId: string) => ['channel-bot-typing', channelId] as const,
     channelAgentConfig: (channelId: string) => ['channel-agent-config', channelId] as const,
+    workspacePresence: ['workspace-presence'] as const,
 }

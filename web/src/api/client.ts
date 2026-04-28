@@ -469,6 +469,10 @@ export class ApiClient {
         return await this.request('/api/channels')
     }
 
+    async getWorkspacePresence(): Promise<{ online: string[] }> {
+        return await this.request('/api/workspace/presence')
+    }
+
     async getChannel(channelId: string): Promise<ChannelResponse> {
         return await this.request(`/api/channels/${encodeURIComponent(channelId)}`)
     }

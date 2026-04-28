@@ -352,7 +352,7 @@ function AppInner() {
     }
 
     return (
-        <AppContextProvider value={{ api, token, baseUrl, userId: user?.id != null ? String(user.id) : null }}>
+        <AppContextProvider value={{ api, token, baseUrl, userId: user?.id != null ? String(user.id) : null, namespace: user?.namespace ?? null }}>
             <VoiceProvider>
                 <SyncingBanner isSyncing={isSyncing} />
                 <ReconnectingBanner

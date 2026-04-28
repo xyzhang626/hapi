@@ -428,7 +428,7 @@ function NewSessionPage() {
 }
 
 function ChannelsPage() {
-    const { api } = useAppContext()
+    const { api, namespace } = useAppContext()
     const navigate = useNavigate()
     const params = useParams({ strict: false }) as { channelId?: string; sessionId?: string }
     const selectedChannelId = params.channelId
@@ -474,7 +474,7 @@ function ChannelsPage() {
                 }}
             >
                 <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--app-border)' }}>
-                    <span className="font-semibold text-sm">HAPI</span>
+                    <span className="font-semibold text-sm truncate" title={namespace ?? undefined}>{namespace ?? 'Workspace'}</span>
                     <button
                         onClick={() => navigate({ to: '/settings' })}
                         className="p-1 rounded"

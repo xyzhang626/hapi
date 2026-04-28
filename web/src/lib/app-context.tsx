@@ -8,6 +8,9 @@ type AppContextValue = {
     /** Stage 2: current authenticated user id, used for owner checks
      *  (e.g. AgentConfigEditor visibility against channel.createdBy). */
     userId: string | null
+    /** Workspace namespace from the auth response — shown as the sidebar
+     *  workspace title (replacing the literal "HAPI" placeholder). */
+    namespace: string | null
 }
 
 const AppContext = createContext<AppContextValue | null>(null)

@@ -28,33 +28,48 @@ export function ChannelList({ api, channels, selectedChannelId, personalChannelI
         }
     }
 
+    // Spec mvp-user-experience.md sidebar wireframe: separate sections
+    // for shared CHANNELS (top) and PRIVATE (bottom). Single flat list
+    // mixed the personal channel with shared channels and lost the
+    // visual distinction.
+    const shared = channels.filter((ch) => ch.id !== personalChannelId)
+    const personal = channels.filter((ch) => ch.id === personalChannelId)
+
+    const renderChannelButton = (channel: Channel) => {
+        const isSelected = channel.id === selectedChannelId
+        return (
+            <button
+                key={channel.id}
+                onClick={() => onSelectChannel(channel.id)}
+                className="w-full text-left px-3 py-1.5 text-sm flex items-center gap-1.5 rounded-md mx-1 transition-colors"
+                style={{
+                    background: isSelected ? 'var(--app-subtle-bg)' : 'transparent',
+                    color: isSelected ? 'var(--app-fg)' : 'var(--app-hint)',
+                }}
+            >
+                <span className="opacity-60">#</span>
+                <span className="truncate">{channel.name}</span>
+            </button>
+        )
+    }
+
     return (
         <div className="flex flex-col h-full">
-            <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--app-hint)' }}>
-                Channels
-            </div>
             <div className="flex-1 overflow-y-auto app-scroll-y">
-                {channels.map((channel) => {
-                    const isSelected = channel.id === selectedChannelId
-                    const isPersonal = channel.id === personalChannelId
-                    return (
-                        <button
-                            key={channel.id}
-                            onClick={() => onSelectChannel(channel.id)}
-                            className="w-full text-left px-3 py-1.5 text-sm flex items-center gap-1.5 rounded-md mx-1 transition-colors"
-                            style={{
-                                background: isSelected ? 'var(--app-subtle-bg)' : 'transparent',
-                                color: isSelected ? 'var(--app-fg)' : 'var(--app-hint)',
-                            }}
-                        >
-                            <span className="opacity-60">#</span>
-                            <span className="truncate">{channel.name}</span>
-                            {isPersonal && (
-                                <span className="ml-auto text-xs opacity-40">me</span>
-                            )}
-                        </button>
-                    )
-                })}
+                <div className="px-3 pt-2 pb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--app-hint)' }}>
+                    Channels
+                </div>
+                {shared.map(renderChannelButton)}
+                {shared.length === 0 && (
+                    <div className="px-3 py-1 text-xs italic" style={{ color: 'var(--app-hint)' }}>
+                        No shared channels yet
+                    </div>
+                )}
+
+                <div className="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--app-hint)' }}>
+                    Private
+                </div>
+                {personal.map(renderChannelButton)}
             </div>
             <div className="px-2 pb-2">
                 {showCreate ? (

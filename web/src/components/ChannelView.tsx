@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { ApiClient } from '@/api/client'
 import type { ChannelMessage, Channel, Session } from '@/types/api'
@@ -7,6 +8,7 @@ import { AgentConfigEditor } from './AgentConfigEditor'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useAppContext } from '@/lib/app-context'
+import { queryKeys } from '@/lib/query-keys'
 
 const QUICK_EMOJIS = ['👀', '👍', '🙏', '🤔', '✅', '⏳', '😅']
 
@@ -106,6 +108,17 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
     const pinnedThreads = threadSessions.filter((s) => (s as any).pinned)
     const channelAny = channel as Channel & { botSessionId?: string | null }
 
+    // Spec mvp-user-experience.md: channel header shows "👥 N online" — the
+    // hub exposes /api/workspace/presence; poll it (cheap aggregate). 30s
+    // is a good balance — fast enough to feel live, slow enough not to spam.
+    const presenceQuery = useQuery({
+        queryKey: queryKeys.workspacePresence,
+        queryFn: () => api.getWorkspacePresence(),
+        refetchInterval: 30_000,
+        staleTime: 0
+    })
+    const onlineCount = presenceQuery.data?.online?.length ?? 0
+
     return (
         <div className="flex flex-col h-full">
             <div
@@ -121,6 +134,13 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                             — {channel.description}
                         </span>
                     )}
+                    <span
+                        className="text-xs"
+                        style={{ color: 'var(--app-hint)' }}
+                        title={`${onlineCount} workspace member${onlineCount === 1 ? '' : 's'} online`}
+                    >
+                        👥 {onlineCount} online
+                    </span>
                     <div className="ml-auto flex items-center gap-3">
                         {channelAny.botSessionId && (
                             <Link
