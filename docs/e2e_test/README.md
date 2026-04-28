@@ -18,10 +18,11 @@ scenario** distinct from prior rounds and targets behaviors not yet stressed.
 | **[R7](round-7.md)** | 3人学术论文评审 | **Reviewer** | 频道重名、bot 的 `unpin_thread` MCP（区别于 UI unpin）、邀请二次接受幂等性、邀请过期 UX、`detach` 线程从频道、reaction 切换 toggle、bad UUID 上的 `get_thread` | **1 bug**：`POST /channels` 无重名检查 → 同一 workspace 可有两个同名频道，sidebar 两个相同按钮，workspace 文件夹冲突。修复为 409 Conflict |
 | **[R8](round-8.md)** | 3人黑客松项目室 | **Captain** | 5 个并发线程 + 3 个 pinned chip 的 overflow 行为、`POST /members`（按 id 加成员，非邀请链接）、`send_to_thread` valid id、thread → channel 反向流的 "Thread:" 归属 | **0 bugs**（纯回归通过）：add-member-by-id 端到端 OK；5 cards + 3 chips 单行不截断；`send_to_thread` valid id 注入消息成功落进目标 thread；cancel + "Cancelled" badge 持续 OK；硬删除清场无残留 |
 | **[R9](round-9.md)** | 3人 Q4 董事会准备 | **Compass** | post-audit-fix 验证（默认频道带 bot / 侧栏 PRIVATE+CHANNELS 分组 / namespace 标题 / 在线数 / CLI 自动附加 #private）+ bot `react_to_message` on 弱信号 + scheduled thread `⏰` chip 视觉验证 + bot session 只读视图 + **agent.json 文件直接编辑热重载** | **1 bug**：agentConfig 文件 watcher 被 `endsWith('agent.json')` 过滤掉了 sed/vim 等编辑器的 temp+rename atomic 写入事件 → 任何非直写编辑器修改 `~/.hapi/channels/{chid}/agent.json` 都不触发 `__config_updated` 注入。修复为 notify-on-any-event |
+| **[R10](round-10.md)** | 3人架构评审委员会 | **Atlas** | `+ New thread` UI 按钮端到端首次点击 + soft-private → shared `🔒Share to channel` toggle（在 More actions overflow）+ 用户 reaction picker 切换 + 单条消息触发多个 MCP（spawn × 2 + pin × 1）+ **channel timeline markdown 渲染** | **1 bug + 1 bonus**：channel timeline 用 `<p whitespace-pre-wrap>` 渲染 bot 消息，markdown `**bold**` / 列表全是字面字符（thread 详情页是渲染的，channel 是唯一不渲染的地方）。修复：从 codex-debug worktree port StandaloneMarkdown 组件。Bonus：`accessToken.ts` whitespace 校验补全（`"token: alice"` 之前会静默接受为 namespace=" alice"，造成幽灵工作区），测试套件首次 240/240 |
 
 ## 总览
 
-**累计 33 个 bug，全部修复**（不含 R1 — 基线轮无独立审计；R8 是首次零 bug 回归通过的轮次，证明前 6 轮的修复达到了稳态；R9 在新一轮 audit-driven fix 之后新发现 1 个 stage-2 spec § X 文件编辑热重载漏洞）
+**累计 34 个 bug，全部修复**（不含 R1 — 基线轮无独立审计；R8 是首次零 bug 回归通过的轮次，证明前 6 轮的修复达到了稳态；R9 在新一轮 audit-driven fix 之后新发现 1 个 stage-2 spec § X 文件编辑热重载漏洞；R10 找到了 channel timeline 一直没有 markdown 渲染的视觉漏洞 + bonus 关掉了套件长期带的 1 个 access-token 校验测试）
 
 ### 复发性主题
 
