@@ -1211,6 +1211,25 @@ export class SyncEngine {
         if (!channel) return false
         const hard = options?.hardDelete === true
 
+        // R14-2: when a channel is renamed via PUT, channel.name changes but
+        // the on-disk workspace folder keeps its ORIGINAL safeName (no rename
+        // happens — the bot/threads are still writing to it). Build the
+        // candidate directory from channel.name first, but ALSO grab the
+        // bot session's actual `path` from its metadata as a backup before
+        // we kill it, so cleanup works post-rename. (The bot's metadata
+        // field is `path`, not `cwd` — verified empirically.)
+        const sessions = this.store.sessions.getAllSessionsByChannel(channelId)
+        let pathFromBot: string | null = null
+        for (const s of sessions) {
+            if (s.isChannelBot) {
+                const meta = s.metadata as { path?: unknown } | null
+                if (meta && typeof meta.path === 'string' && meta.path.length > 0) {
+                    pathFromBot = meta.path
+                }
+                break
+            }
+        }
+
         // Stage 2: archive threads + kill bot session before deleting the row.
         // Use the cross-namespace listing so bot sessions registered under a
         // different namespace (e.g. embedded-runner's 'default') are still
@@ -1219,7 +1238,6 @@ export class SyncEngine {
         // so they stop checkpointing into the workspace folder we're about
         // to rename — otherwise the subprocess re-creates it via mkdirSync
         // and the user sees a ghost {channelName}/ next to {-archived-ts}/.
-        const sessions = this.store.sessions.getAllSessionsByChannel(channelId)
         for (const s of sessions) {
             if (s.isChannelBot) {
                 // Best-effort kill of bot CLI session
@@ -1247,10 +1265,18 @@ export class SyncEngine {
             const safeName = channel.name.replace(/[^a-zA-Z0-9_-]/g, '_')
             const homeDir = process.env.HAPI_HOME ?? `${process.env.HOME ?? '/tmp'}/.hapi`
             const dir = `${homeDir}/workspaces/${namespace}/${safeName}`
-            const archived = `${dir}-archived-${Date.now()}`
+            // R14-2: prefer the bot's recorded path (set at spawn time, never
+            // mutated by channel rename) over the current channel.name path.
+            // Both are tried so old DBs without the bot session metadata
+            // still get cleaned up via the legacy name-based path.
+            const candidates = new Set<string>()
+            candidates.add(dir)
+            if (pathFromBot) candidates.add(pathFromBot)
             const fs = require('node:fs') as typeof import('node:fs')
-            if (fs.existsSync(dir)) {
-                fs.renameSync(dir, archived)
+            for (const candidate of candidates) {
+                if (!fs.existsSync(candidate)) continue
+                const archived = `${candidate}-archived-${Date.now()}`
+                fs.renameSync(candidate, archived)
                 if (hard) {
                     fs.rmSync(archived, { recursive: true, force: true })
                 }

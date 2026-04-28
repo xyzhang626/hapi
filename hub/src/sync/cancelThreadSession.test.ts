@@ -2,6 +2,9 @@ import { describe, expect, it } from 'bun:test'
 import { Store } from '../store'
 import { SyncEngine } from './syncEngine'
 import { RpcRegistry } from '../socket/rpcRegistry'
+import { mkdirSync, rmSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 /**
  * R13-1 regression: scheduled threads are auto-pinned on spawn.
@@ -93,5 +96,63 @@ describe('cancelThreadSession (R13-1)', () => {
         expect(body.status).toBe('canceled')
         expect(body.taskTitle).toBe('task-x')
         expect(body.reason).toBe('reason-text')
+    })
+})
+
+/**
+ * R14-2 regression: when a channel is renamed via PUT, channel.name
+ * changes but the on-disk workspace folder keeps its ORIGINAL safeName
+ * (rename does NOT move the folder — bot/threads are still writing to
+ * it). On hard-delete, the cleanup path computed `dir` from the CURRENT
+ * channel.name, which doesn't exist on disk — so the folder lingered.
+ * Fix uses the bot session's recorded `metadata.path` as a backup
+ * candidate.
+ */
+describe('deleteChannel post-rename folder cleanup (R14-2)', () => {
+    it('removes the original workspace folder even when channel was renamed', () => {
+        const tmpHapiHome = join(tmpdir(), `hapi-r14-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+        mkdirSync(tmpHapiHome, { recursive: true })
+        const oldHome = process.env.HAPI_HOME
+        process.env.HAPI_HOME = tmpHapiHome
+        try {
+            const store = new Store(':memory:')
+            const engine = new SyncEngine(
+                store,
+                { of: () => ({ to: () => ({ emit() {} }) }) } as never,
+                new RpcRegistry(),
+                { broadcast() {} } as never
+            )
+            const channel = store.channels.createChannel('ns1', 'original-name', 'u1', undefined, { botName: 'A' })
+            // Simulate the spawn: a bot session whose metadata.path points
+            // at the ORIGINAL safeName workspace folder.
+            const originalDir = join(tmpHapiHome, 'workspaces', 'ns1', 'original-name')
+            mkdirSync(originalDir, { recursive: true })
+            store.sessions.getOrCreateSession(
+                'bot-tag',
+                { path: originalDir, isChannelBot: true, channelId: channel.id, botName: 'A' },
+                null,
+                'ns1',
+                undefined,
+                undefined,
+                undefined,
+                { channelId: channel.id, isChannelBot: true }
+            )
+            // Rename the channel (simulating PUT — folder stays put).
+            store.channels.updateChannel(channel.id, 'ns1', { name: 'new-name' })
+
+            // Sanity: the workspace folder is at the ORIGINAL name.
+            expect(existsSync(originalDir)).toBe(true)
+            expect(existsSync(join(tmpHapiHome, 'workspaces', 'ns1', 'new-name'))).toBe(false)
+
+            // Hard delete via the engine.
+            engine.deleteChannel(channel.id, 'ns1', { hardDelete: true })
+
+            // R14-2 fix: the original folder is gone, even though the cleanup
+            // path's "dir from current channel.name" miss.
+            expect(existsSync(originalDir)).toBe(false)
+        } finally {
+            process.env.HAPI_HOME = oldHome
+            try { rmSync(tmpHapiHome, { recursive: true, force: true }) } catch { /* */ }
+        }
     })
 })
