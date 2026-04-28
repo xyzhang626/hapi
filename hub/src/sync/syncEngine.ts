@@ -993,6 +993,16 @@ export class SyncEngine {
         if (!session.channelId) throw new Error(`Session ${threadId} is not a thread`)
         // Mark thread as archived
         this.store.sessions.setThreadStatus(threadId, namespace, 'archived')
+        // R13: scheduled threads are auto-pinned on spawn (per spec §VIII).
+        // After cancel they're archived (above), but the pinned chip kept
+        // showing in the channel header pointing to a dead thread. Unpin
+        // here so the chip strip stays accurate. Also covers manually-pinned
+        // regular threads — once cancelled they shouldn't keep header real
+        // estate. setSessionPinned emits the `thread-unpinned` SSE event so
+        // the chip strip drops it live.
+        if (session.pinned) {
+            this.setSessionPinned(threadId, namespace, false)
+        }
         // Best-effort kill the underlying CLI session via RPC
         try {
             await this.rpcGateway.killSession(threadId)
