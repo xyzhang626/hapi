@@ -386,7 +386,7 @@ function ChannelMessageItem({
             : null
         const enrichedCard = friendlyStartedBy ? { ...cardData, startedBy: friendlyStartedBy } : cardData
         return (
-            <div>
+            <div className="group relative">
                 <ThreadCard
                     data={enrichedCard}
                     kind={message.kind}
@@ -394,6 +394,18 @@ function ChannelMessageItem({
                         if (message.threadSessionId) onOpenThread(message.threadSessionId)
                     }}
                 />
+                {/* R11: spec §IX says reactions work on any message kind including
+                    thread cards. The `+ 😊` trigger lives only on text-message
+                    rows below — add a hover-revealed trigger anchored to the
+                    card here so the existing ReactionRow picker can show. */}
+                <button
+                    onClick={(e) => { e.stopPropagation(); setShowPicker(!showPicker) }}
+                    className="absolute top-1 right-1 opacity-0 group-hover:opacity-60 hover:opacity-100 transition-opacity text-xs px-1.5 py-0.5 rounded"
+                    style={{ color: 'var(--app-hint)', background: 'var(--app-bg)' }}
+                    title="React"
+                >
+                    + 😊
+                </button>
                 <ReactionRow message={message} onReact={onReact} showPicker={showPicker} setShowPicker={setShowPicker} />
             </div>
         )
