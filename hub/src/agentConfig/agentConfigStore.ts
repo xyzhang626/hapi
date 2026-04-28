@@ -145,10 +145,15 @@ export class AgentConfigStore {
         const dir = join(this.basePath, channelId)
         if (!existsSync(dir)) return
         try {
-            const w = watch(dir, (_eventType, filename) => {
-                if (!filename) return
-                if (typeof filename !== 'string') return
-                if (!filename.endsWith('agent.json')) return
+            const w = watch(dir, (_eventType, _filename) => {
+                // Notify on ANY event in the channel dir. Filtering by
+                // `filename === 'agent.json'` was too strict — atomic editors
+                // (sed -i, vim's `:w`, many JSON formatters) write to a temp
+                // file then rename, producing fs.watch events with the temp
+                // file's name (e.g. `sedHfqpYR`). scheduleNotify re-reads
+                // agent.json from disk and only emits if it parses cleanly,
+                // so spurious events on unrelated files (none expected in
+                // this dir) are no-ops.
                 this.scheduleNotify(channelId)
             })
             this.channelWatchers.set(channelId, w)

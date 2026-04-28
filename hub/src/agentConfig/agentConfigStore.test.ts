@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from 'bun:test'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { AgentConfigStore } from './agentConfigStore'
@@ -66,4 +66,35 @@ describe('AgentConfigStore', () => {
         expect(p).toContain('abc-123')
         expect(p).toContain('agent.json')
     })
+
+    // R9 regression: editors that do atomic write (sed -i, vim :w, many JSON
+    // formatters) write to a temp file then rename. The fs.watch callback
+    // receives the temp filename, NOT 'agent.json'. The previous filter
+    // `if (!filename.endsWith('agent.json')) return` silently dropped these
+    // events, so on-disk hot-reload was DOA for any editor that's not a
+    // direct-write tool. The fix notifies on ANY event in the channel dir
+    // and re-reads agent.json from disk.
+    it('subscribe fires on atomic temp-then-rename file edit', async () => {
+        baseDir = tempBase()
+        store = new AgentConfigStore(baseDir)
+        store.startWatching()
+        const ch = 'ch-atomic'
+        store.write(ch, { botName: 'Compass' })
+
+        const events: { config: { botName?: string } }[] = []
+        store.subscribe((c) => events.push(c as { config: { botName?: string } }))
+
+        // Atomic edit: write tempfile, then rename to agent.json (same as
+        // sed -i, vim's `:w`, and most editors with crash-safety enabled).
+        await new Promise((r) => setTimeout(r, 100))
+        const dir = join(baseDir, ch)
+        const tmp = join(dir, '.agent.json.tmp')
+        writeFileSync(tmp, JSON.stringify({ botName: 'Captain' }))
+        renameSync(tmp, join(dir, 'agent.json'))
+
+        await new Promise((r) => setTimeout(r, 600))
+        expect(events.length).toBeGreaterThan(0)
+        const last = events[events.length - 1]
+        expect(last.config.botName).toBe('Captain')
+    }, 5000)
 })
