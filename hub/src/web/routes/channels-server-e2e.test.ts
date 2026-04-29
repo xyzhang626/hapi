@@ -429,7 +429,45 @@ describe('channels server E2E (real HTTP)', () => {
     })
 
     // ------------------------------------------------------------------
-    // 6. Reactions (Stage 2)
+    // 6. Channel sessions list filters bot session out
+    // ------------------------------------------------------------------
+    describe('channel sessions', () => {
+        it('GET /channels/:id/sessions excludes the channel bot session', async () => {
+            const createRes = await fetch(`${baseUrl}/api/channels`, {
+                method: 'POST',
+                headers: authHeaders(aliceToken),
+                body: JSON.stringify({ name: 'session-filter' })
+            })
+            expect(createRes.status).toBe(201)
+            const { channel } = await createRes.json() as any
+
+            const bot = store.sessions.getOrCreateSession(`bot-${channel.id}`, { path: '/' }, null, 'test-ns', undefined, undefined, undefined, {
+                channelId: channel.id,
+                isChannelBot: true
+            })
+            const thread = store.sessions.getOrCreateSession(`thread-${channel.id}`, { path: '/' }, null, 'test-ns', undefined, undefined, undefined, {
+                channelId: channel.id,
+                threadTitle: 'Visible thread',
+                createdByUserId: '1'
+            })
+
+            const res = await fetch(`${baseUrl}/api/channels/${channel.id}/sessions`, {
+                headers: authHeaders(aliceToken)
+            })
+            expect(res.status).toBe(200)
+            const { sessions } = await res.json() as any
+            expect(sessions.map((session: any) => session.id)).toEqual([thread.id])
+            expect(sessions.some((session: any) => session.id === bot.id)).toBe(false)
+
+            await fetch(`${baseUrl}/api/channels/${channel.id}`, {
+                method: 'DELETE',
+                headers: authHeaders(aliceToken)
+            })
+        })
+    })
+
+    // ------------------------------------------------------------------
+    // 7. Reactions (Stage 2)
     // ------------------------------------------------------------------
     describe('message reactions', () => {
         it('toggle adds and removes a reaction; GET messages includes reactions[]', async () => {

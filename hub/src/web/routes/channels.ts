@@ -271,6 +271,7 @@ export function createChannelsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         const r = requireChannelMember(c, engine, id)
         if (r instanceof Response) return r
         const sessions = engine.getSessionsByChannel(id, r.channel.namespace)
+            .filter((s) => !s.isChannelBot)
         // Stage 2: enrich each session with createdByDisplayName (cross-ns
         // workspace lookup) so the web ThreadCard can render "by Alice"
         // instead of falling back to the raw userId for invited members.
