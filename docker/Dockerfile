@@ -54,7 +54,18 @@ ENV HAPI_HOME=/data/.hapi \
 # initializes named-volume ownership from the mountpoint dir's owner in
 # the image, so we must mkdir + chown them BEFORE the VOLUME directive
 # or pwuser won't be able to write at runtime.
+#
+# In find-mode the host bind-mounts /workspace as RO, so each workspace
+# package's node_modules also needs a writable named volume mounted on
+# top — same trick: pre-create the mountpoint as pwuser-owned so the
+# volume inherits the right ownership on first attach.
 RUN mkdir -p /workspace/node_modules /data /home/pwuser/.claude \
+        /workspace/cli/node_modules \
+        /workspace/hub/node_modules \
+        /workspace/web/node_modules \
+        /workspace/shared/node_modules \
+        /workspace/website/node_modules \
+        /workspace/docs/node_modules \
     && chown -R pwuser:pwuser /workspace /data /home/pwuser
 
 WORKDIR /workspace
