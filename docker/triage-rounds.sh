@@ -53,18 +53,32 @@ round_md_path() {
     fi
 }
 
-# For a given round number, return the canonical screenshots dir:
+# For a given round number, return the canonical screenshots dir.
+# Find-mode rounds put screenshots under round-N-evidence/screenshots/;
+# legacy fix-mode put them at docs/e2e_test/round-N-screenshots/.
 round_shots_path() {
     local n="$1"
-    local find_path="/home/azureuser/hapi-rounds/round-$n/round-$n-screenshots"
+    local find_evidence_path="/home/azureuser/hapi-rounds/round-$n/round-$n-evidence/screenshots"
+    local find_legacy_path="/home/azureuser/hapi-rounds/round-$n/round-$n-screenshots"
     local fix_path="/home/azureuser/hapi-worktrees-round-$n/docs/e2e_test/round-$n-screenshots"
-    if [ -d "$find_path" ]; then
-        echo "$find_path"
+    if [ -d "$find_evidence_path" ]; then
+        echo "$find_evidence_path"
+    elif [ -d "$find_legacy_path" ]; then
+        echo "$find_legacy_path"
     elif [ -d "$fix_path" ]; then
         echo "$fix_path"
     else
         echo ""
     fi
+}
+
+# For a given round number, return the canonical evidence dir (find-mode
+# only). This subtree contains screenshots/, logs/, and (after entrypoint
+# rename) playwright-cli/ — the full triage-cp target.
+round_evidence_path() {
+    local n="$1"
+    local p="/home/azureuser/hapi-rounds/round-$n/round-$n-evidence"
+    [ -d "$p" ] && echo "$p" || echo ""
 }
 
 # For a given round number, return human-friendly origin description:
@@ -120,10 +134,13 @@ mapfile -t ROUNDS < <(printf '%s\n' "${ROUNDS[@]}" | sort -nu)
     echo "2. Group bugs by suspected root cause across rounds (e.g. R15-1 and"
     echo "   R17-2 may both point at the same hub handler)."
     echo "3. For each group, decide: fix / defer / not-a-bug / spec change."
-    echo "4. For find-mode rounds: copy round-N.md + screenshots into the main"
-    echo "   repo at \`docs/e2e_test/\`, write the fix on a fix branch, run"
-    echo "   the round's Repro steps to verify, commit (test commit + fix"
-    echo "   commits, fixes-then-test order to match R1-R17 history style)."
+    echo "4. For find-mode rounds: copy round-N.md + entire round-N-evidence/"
+    echo "   subtree into the main repo at \`docs/e2e_test/\`. Bug-report"
+    echo "   relative paths (round-N-evidence/screenshots/..., etc) resolve"
+    echo "   automatically once the subtree lands at the same relative spot."
+    echo "   Then write the fix on a fix branch, run the round's Repro steps"
+    echo "   to verify, commit (test commit + fix commits, fixes-then-test"
+    echo "   order to match R1-R17 history style)."
     echo "5. For fix-mode rounds: cherry-pick the round's existing commits"
     echo "   from its \`e2e/round-N\` branch."
     echo
@@ -151,15 +168,26 @@ mapfile -t ROUNDS < <(printf '%s\n' "${ROUNDS[@]}" | sort -nu)
             continue
         fi
         printf '%s\n' "$BUGS_BLOCK"
-        # Surface the screenshot dir so the triage agent knows where to look.
+        # Surface the screenshot dir + full evidence subtree so the triage
+        # agent knows where to look + can cp -r in one shot.
         SHOTS="$(round_shots_path "$n")"
-        if [ -n "$SHOTS" ]; then
+        EVIDENCE="$(round_evidence_path "$n")"
+        if [ -n "$EVIDENCE" ]; then
+            COUNT_SHOTS="$(find "$EVIDENCE/screenshots" -maxdepth 1 -name '*.png' 2>/dev/null | wc -l)"
+            COUNT_LOGS="$(find "$EVIDENCE/logs" -maxdepth 1 -name '*.log' 2>/dev/null | wc -l)"
+            COUNT_PWLOGS="$(find "$EVIDENCE/playwright-cli" -maxdepth 1 -type f 2>/dev/null | wc -l)"
+            echo
+            echo "**Evidence subtree** (cp -r to docs/e2e_test/round-$n-evidence/): \`$EVIDENCE\`"
+            echo "  - screenshots: $COUNT_SHOTS"
+            echo "  - logs: $COUNT_LOGS"
+            echo "  - playwright-cli: $COUNT_PWLOGS"
+        elif [ -n "$SHOTS" ]; then
             COUNT="$(find "$SHOTS" -maxdepth 1 -name '*.png' | wc -l)"
             echo
             echo "**Screenshots** ($COUNT files): \`$SHOTS\`"
         else
             echo
-            echo "_(no screenshots dir)_"
+            echo "_(no screenshots / evidence dir)_"
         fi
     done
 } > "$OUT"

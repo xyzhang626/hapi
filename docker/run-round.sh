@@ -100,8 +100,11 @@ if [ "$ROUND_MODE" = "find" ]; then
         echo "  sudo rm -rf $ROUND_ARTIFACT_DIR" >&2
         exit 1
     fi
-    mkdir -p "$ROUND_ARTIFACT_DIR/round-${ROUND_NUM}-screenshots"
-    mkdir -p "$ROUND_ARTIFACT_DIR/.round-logs"
+    # All evidence (logs, screenshots, playwright-cli session yaml/log) lives
+    # under round-N-evidence/, so triage can `cp -r round-N-evidence` into
+    # docs/e2e_test/ in one shot and round-N.md's relative path links resolve.
+    EVIDENCE_DIR_HOST="$ROUND_ARTIFACT_DIR/round-${ROUND_NUM}-evidence"
+    mkdir -p "$EVIDENCE_DIR_HOST/screenshots" "$EVIDENCE_DIR_HOST/logs"
     PROMPT_FILE="$ROUND_ARTIFACT_DIR/round-prompt.md"
     BRANCH=""  # not used in find mode
     SOURCE_DIR="$REPO_ROOT"  # bind-mounted RO into container's /workspace
@@ -198,6 +201,8 @@ if [ "$ROUND_MODE" = "find" ]; then
         -v "$ROUND_ARTIFACT_DIR":/round-out
         -e "HAPI_ROUND_PROMPT_FILE=/round-out/round-prompt.md"
         -e "HAPI_ROUND_OUTPUT_DIR=/round-out"
+        -e "HAPI_ROUND_EVIDENCE_DIR=/round-out/round-${ROUND_NUM}-evidence"
+        -e "HAPI_ROUND_NUM=${ROUND_NUM}"
     )
     for ws in cli hub web shared website docs; do
         RUN_ARGS+=( -v "${CONTAINER_NAME}-${ws}-nm:/workspace/${ws}/node_modules" )
@@ -242,14 +247,15 @@ if [ "$ROUND_MODE" = "find" ]; then
     cat <<EOF
 
 Tail claude transcript (once it begins):
-  tail -f $ROUND_ARTIFACT_DIR/.round-logs/claude.log
+  tail -f $EVIDENCE_DIR_HOST/logs/claude.log
 
 Tail hub/web dev log:
-  tail -f $ROUND_ARTIFACT_DIR/.round-logs/dev.log
+  tail -f $EVIDENCE_DIR_HOST/logs/dev.log
 
 Inspect artifacts mid-flight (host can read directly, no docker exec needed):
   ls -la $ROUND_ARTIFACT_DIR
   cat  $ROUND_ARTIFACT_DIR/round-${ROUND_NUM}.md
+  ls -la $EVIDENCE_DIR_HOST          # screenshots/ logs/ playwright-cli/
 
 After the round completes, integrate via triage:
   bash docker/triage-rounds.sh $ROUND_NUM        # write summary to /tmp/BUGS-AGGREGATE.md

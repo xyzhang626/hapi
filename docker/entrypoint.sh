@@ -34,10 +34,16 @@ fi
 
 echo "[entrypoint] round mode — prompt: $HAPI_ROUND_PROMPT_FILE"
 
-# Logs go inside the per-round artifact dir if HAPI_ROUND_OUTPUT_DIR is set
-# (find-mode: shared RO source + per-round /round-out RW), otherwise inside
-# /workspace (legacy fix-mode: per-round writable worktree).
-LOG_DIR="${HAPI_ROUND_OUTPUT_DIR:-/workspace}/.round-logs"
+# Where the agent's evidence lives. In find-mode HAPI_ROUND_EVIDENCE_DIR
+# is set to /round-out/round-N-evidence — a single subtree containing
+# logs/, screenshots/, and (after rename) playwright-cli/, all referenced
+# from bug reports as `round-N-evidence/<sub>/<file>`. Fix-mode falls back
+# to the legacy `<workspace>/.round-logs` flat layout.
+if [ -n "${HAPI_ROUND_EVIDENCE_DIR:-}" ]; then
+    LOG_DIR="$HAPI_ROUND_EVIDENCE_DIR/logs"
+else
+    LOG_DIR="${HAPI_ROUND_OUTPUT_DIR:-/workspace}/.round-logs"
+fi
 mkdir -p "$LOG_DIR"
 
 bun run dev > "$LOG_DIR/dev.log" 2>&1 &
@@ -80,13 +86,15 @@ done
 echo "[entrypoint] launching autonomous claude session"
 echo "[entrypoint] full transcript will be at $LOG_DIR/claude.log"
 
-# In find-mode, cd into the writable artifact dir before launching claude.
-# claude inherits this cwd, and so does every Bash tool invocation it makes.
-# playwright-cli, in particular, writes per-session artifacts under
-# `$CWD/.playwright-cli/` — with /workspace RO that would EROFS. Putting cwd
-# at /round-out keeps those side-effects scoped to the per-round volume.
-# Fix-mode keeps cwd at /workspace (the per-round writable worktree).
-if [ -n "${HAPI_ROUND_OUTPUT_DIR:-}" ]; then
+# In find-mode, cd into the evidence dir before launching claude. claude
+# inherits this cwd, and so does every Bash tool invocation. playwright-cli
+# auto-creates `$CWD/.playwright-cli/` for its session yaml + console log;
+# putting cwd at the evidence dir keeps those next to logs/ and screenshots/.
+# In fix-mode (no evidence dir), fall back to /workspace (the writable
+# worktree), and to /round-out if only HAPI_ROUND_OUTPUT_DIR is set.
+if [ -n "${HAPI_ROUND_EVIDENCE_DIR:-}" ]; then
+    cd "$HAPI_ROUND_EVIDENCE_DIR"
+elif [ -n "${HAPI_ROUND_OUTPUT_DIR:-}" ]; then
     cd "$HAPI_ROUND_OUTPUT_DIR"
 fi
 
@@ -106,12 +114,25 @@ set -e
 
 echo "[entrypoint] claude exited rc=$CLAUDE_RC"
 
+# playwright-cli's session metadata + console logs land in $CWD/.playwright-cli
+# (i.e. the evidence dir's hidden subdir). Rename to a non-hidden name so
+# triage `cp -r round-N-evidence/...` doesn't silently skip dotfiles and so
+# bug reports can reference `round-N-evidence/playwright-cli/...` paths.
+if [ -n "${HAPI_ROUND_EVIDENCE_DIR:-}" ] && [ -d "$HAPI_ROUND_EVIDENCE_DIR/.playwright-cli" ]; then
+    mv "$HAPI_ROUND_EVIDENCE_DIR/.playwright-cli" "$HAPI_ROUND_EVIDENCE_DIR/playwright-cli"
+    echo "[entrypoint] renamed .playwright-cli → playwright-cli for clean triage cp"
+fi
+
 # Post-run inspection. In fix-mode the worktree has a real branch; show
 # git state. In find-mode /workspace is RO and there's no per-round
 # branch — list artifacts in the output dir instead.
 if [ -n "${HAPI_ROUND_OUTPUT_DIR:-}" ]; then
     echo "[entrypoint] artifacts in $HAPI_ROUND_OUTPUT_DIR:"
     ls -la "$HAPI_ROUND_OUTPUT_DIR" 2>/dev/null || true
+    if [ -n "${HAPI_ROUND_EVIDENCE_DIR:-}" ]; then
+        echo "[entrypoint] evidence subtree:"
+        ls -la "$HAPI_ROUND_EVIDENCE_DIR" 2>/dev/null || true
+    fi
 else
     echo "[entrypoint] git status in $PWD:"
     git status --short || true

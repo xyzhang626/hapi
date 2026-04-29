@@ -86,22 +86,42 @@ bash docker/run-round.sh 18 "..." --mode fix --base main    # fix mode 指定 ba
 
 ### Find mode — 干的事
 
-1. **创建 artifact dir** `/home/azureuser/hapi-rounds/round-N/{round-N-screenshots/,.round-logs/}`
+1. **创建 artifact dir** `/home/azureuser/hapi-rounds/round-N/round-N-evidence/{screenshots/,logs/}`
 2. **渲染 prompt** 到 `/home/azureuser/hapi-rounds/round-N/round-prompt.md`
 3. **起容器** mount 关系:
    - 宿主 `hapi-worktrees-docker/` → `/workspace` **RO**(整个 source tree,agent 看得到 spec / R1-R17 历史 / 代码 但写不动)
    - 宿主 `hapi-rounds/round-N/` → `/round-out` RW
-   - 命名卷 `<container>-node-modules` → `/workspace/node_modules`(在 RO 父 mount 上叠 RW 子 mount,bun install 写得动)
+   - 命名卷 `<container>-node-modules` → `/workspace/node_modules`(在 RO 父 mount 上叠 RW 子 mount)
+   - 6 个命名卷 `<container>-{cli,hub,web,shared,website,docs}-nm` → `/workspace/<ws>/node_modules`(bun workspace install 必需)
    - 命名卷 `<container>-hapi-home` → `/data`(`HAPI_HOME=/data/.hapi`)
    - 命名卷 `<container>-claude-home` → `/home/pwuser/.claude`
    - 宿主 `~/.claude/settings.json` (RO) → `/home/pwuser/.claude/settings.json`
-4. **Entrypoint** 检测 `HAPI_ROUND_OUTPUT_DIR=/round-out`(round-mode 信号):
+4. **Entrypoint** 检测 `HAPI_ROUND_EVIDENCE_DIR=/round-out/round-N-evidence`(round-mode 信号):
    - `bun install --frozen-lockfile`(首次)
-   - `bun run dev` 后台 → 日志去 `/round-out/.round-logs/dev.log`
+   - `bun run dev` 后台,日志重定向到 `/round-out/round-N-evidence/logs/dev.log`
    - 等 dev.log 出现"HAPI Hub is ready" + "EmbeddedRunner ... started"双信号(max 120s)
-   - `claude --print --dangerously-skip-permissions < /round-out/round-prompt.md > /round-out/.round-logs/claude.log`
-5. claude 自主跑流程:读 spec、设计 round、写 `/round-out/round-N.md` + screenshots、playwright-cli 三个 named session 操作 → 发现 bug 写 bug report
-6. claude 退出 → entrypoint cleanup(SIGTERM bun)→ 容器 `--rm` 自清,artifacts 留在宿主
+   - `cd /round-out/round-N-evidence`(playwright-cli 的 `.playwright-cli/` 自动落到这,跟 logs/screenshots 同目录)
+   - `claude --print --dangerously-skip-permissions < /round-out/round-prompt.md > /round-out/round-N-evidence/logs/claude.log`
+5. claude 自主跑流程:读 spec、设计 round、写 `/round-out/round-N.md`、playwright 三个 named session 操作 → 发现 bug 写**结构化 bug report**(每个 bug 4 类 evidence:screenshot / DOM yaml / console log / hub log,路径全用 `round-N-evidence/...` 相对路径)
+6. claude 退出 → entrypoint 把 `.playwright-cli` 改名 `playwright-cli`(去掉 dot 让 triage `cp -r` 不漏)→ cleanup → `--rm` 自清
+
+### Find mode — `/round-out` 实际产出
+
+```
+/home/azureuser/hapi-rounds/round-N/
+├── round-prompt.md              ← run-round.sh 渲染(input)
+├── round-N.md                   ← agent 写,bug report 总入口,引用所有 evidence 用相对路径
+└── round-N-evidence/            ← 整个 cp 进 docs/e2e_test/round-N-evidence/ 即可
+    ├── screenshots/
+    │   ├── r{N}-step5-channel-header.png
+    │   └── r{N}-bug-1-injected-bubble.png
+    ├── playwright-cli/          ← 原本叫 .playwright-cli,entrypoint 改名
+    │   ├── page-2026-04-29T...yml         (完整 DOM yaml,每次 snapshot 一份)
+    │   └── console-2026-04-29T...log      (浏览器 console 流)
+    └── logs/
+        ├── dev.log               (hub + vite + embedded runner stdout)
+        └── claude.log            (claude --print 全 transcript)
+```
 
 ### Fix mode — 干的事(legacy)
 
@@ -110,11 +130,11 @@ bash docker/run-round.sh 18 "..." --mode fix --base main    # fix mode 指定 ba
 ### 看进度(find mode)
 
 ```bash
-sudo docker logs -f hapi-e2e-round-18                                # entrypoint stdout
-tail -f /home/azureuser/hapi-rounds/round-18/.round-logs/dev.log     # hub/web 日志
-tail -f /home/azureuser/hapi-rounds/round-18/.round-logs/claude.log  # 完整 claude transcript
-ls -la /home/azureuser/hapi-rounds/round-18/                          # artifacts(host 直接读,不用 docker exec)
-cat   /home/azureuser/hapi-rounds/round-18/round-18.md
+sudo docker logs -f hapi-e2e-round-18                                              # entrypoint stdout
+tail -f /home/azureuser/hapi-rounds/round-18/round-18-evidence/logs/dev.log        # hub/web 日志
+tail -f /home/azureuser/hapi-rounds/round-18/round-18-evidence/logs/claude.log     # 完整 claude transcript
+ls -la /home/azureuser/hapi-rounds/round-18/round-18-evidence/                     # 看 evidence subtree 长成什么
+cat   /home/azureuser/hapi-rounds/round-18/round-18.md                              # bug report 入口
 ```
 
 ### 跑完了,把 bug 报告汇总到一处
@@ -133,9 +153,11 @@ bash docker/triage-rounds.sh -o /tmp/r18-21.md 18 19 20 21  # 自定义输出
 # 1. 看汇总,跨 round 去重根因
 less /tmp/BUGS-AGGREGATE.md
 
-# 2. 把决定要修的 round 的 artifacts copy 进 repo:
+# 2. 把决定要修的 round 的 artifacts 全套 cp 进 repo:
 cp /home/azureuser/hapi-rounds/round-18/round-18.md docs/e2e_test/
-cp -r /home/azureuser/hapi-rounds/round-18/round-18-screenshots docs/e2e_test/
+cp -r /home/azureuser/hapi-rounds/round-18/round-18-evidence docs/e2e_test/
+# bug.md 里写的相对路径 round-18-evidence/screenshots/... / logs/... / playwright-cli/...
+# cp 后自动 resolve(因为相对路径不变,只是把整个 evidence subtree 整体迁过去)
 # 也手动改一下 docs/e2e_test/README.md 的历史表加 R18 行
 
 # 3. 根据 round-18.md 的 Pointers for fix 写代码
@@ -145,7 +167,7 @@ $EDITOR hub/src/...
 
 # 5. 按现有 repo 风格 commit:fixes-then-test
 git add hub/src/foo.ts && git commit -m "fix(stage-2): ..."
-git add docs/e2e_test/round-18.md docs/e2e_test/round-18-screenshots docs/e2e_test/README.md
+git add docs/e2e_test/round-18.md docs/e2e_test/round-18-evidence docs/e2e_test/README.md
 git commit -m "test(round-18): ..."
 ```
 

@@ -32,17 +32,22 @@
 
 `/workspace`(整个 host repo)是 **read-only bind-mount**。你尝试写任何 `/workspace/...` 路径的话内核直接返 `EROFS`,和 prompt 嘱咐无关。
 
-**唯一能写的地方**是 `/round-out/`(per-round artifact dir,host 端是 `/home/azureuser/hapi-rounds/round-{{ROUND_NUM}}/`)。允许结构:
+**唯一能写的地方**是 `/round-out/`(per-round artifact dir,host 端是 `/home/azureuser/hapi-rounds/round-{{ROUND_NUM}}/`)。两条主路径:
 
-| 容器内路径 | 用途 | host 端落点 |
+| 容器内路径 | 谁写 | 用途 |
 |---|---|---|
-| `/round-out/round-{{ROUND_NUM}}.md` | 测试 plan + bug reports | `/home/azureuser/hapi-rounds/round-{{ROUND_NUM}}/round-{{ROUND_NUM}}.md` |
-| `/round-out/round-{{ROUND_NUM}}-screenshots/*.png` | 视觉证据 | 同前缀的 screenshots dir |
-| `/round-out/.round-logs/*.log` | entrypoint 写,你别动 | 同前缀的 logs dir |
+| `/round-out/round-{{ROUND_NUM}}.md` | 你 | 测试 plan + bug reports(triage 会 cp 到 `docs/e2e_test/round-{{ROUND_NUM}}.md`) |
+| `/round-out/round-{{ROUND_NUM}}-evidence/screenshots/*.png` | 你(playwright `page.screenshot`)| 视觉证据 |
+| `/round-out/round-{{ROUND_NUM}}-evidence/logs/dev.log` | entrypoint(已写入)| hub + web + runner stdout |
+| `/round-out/round-{{ROUND_NUM}}-evidence/logs/claude.log` | entrypoint(已写入)| 你自己的完整 transcript |
+| `/round-out/round-{{ROUND_NUM}}-evidence/playwright-cli/*.yml` | playwright-cli 守护进程自动写 | 每次 snapshot 的完整 DOM yaml |
+| `/round-out/round-{{ROUND_NUM}}-evidence/playwright-cli/console-*.log` | playwright-cli 守护进程自动写 | 浏览器 console 流 |
+
+> entrypoint 已经把你的 cwd 设为 `/round-out/round-{{ROUND_NUM}}-evidence/`,所以 playwright-cli 自动落地的 `.playwright-cli/`(运行时是隐藏 dot 名)就在这个 evidence dir 里。容器退出前 entrypoint 会把 `.playwright-cli` 重命名为 `playwright-cli`(去掉 dot)方便 triage cp。
 
 **不要**写 `/round-out/round-prompt.md`(那是 entrypoint 留下的 input,不是你的产出)。
 
-不需要 commit,不需要切分支,不需要 push,不需要 typecheck/test。host triage 看完 `/round-out/round-{{ROUND_NUM}}.md` 后会决定要不要把它 mv 进 `docs/e2e_test/round-{{ROUND_NUM}}.md` + 对应 commit。
+不需要 commit,不需要切分支,不需要 push,不需要 typecheck/test。host triage 看完 `/round-out/round-{{ROUND_NUM}}.md` 后会决定要不要把它和整个 `round-{{ROUND_NUM}}-evidence/` cp 进 `docs/e2e_test/`。**你写在 bug report 里的相对路径在 cp 后会自然 resolve**,所以路径风格非常重要 —— 见下面 Bug Report 模板。
 
 ---
 
@@ -74,7 +79,7 @@
 
 ## Bug Report 模板
 
-每个发现的 bug 在 `/round-out/round-{{ROUND_NUM}}.md` 的 `## Bugs Found` 段下用以下结构写:
+每个发现的 bug 在 `/round-out/round-{{ROUND_NUM}}.md` 的 `## Bugs Found` 段下用以下结构写。**关键约束**:Evidence 段所有路径用 **`round-{{ROUND_NUM}}-evidence/...` 起头的相对路径**。这样 triage agent 把 round-{{ROUND_NUM}}.md 复制到 `docs/e2e_test/round-{{ROUND_NUM}}.md` + 整个 `round-{{ROUND_NUM}}-evidence/` 复制到 `docs/e2e_test/round-{{ROUND_NUM}}-evidence/` 之后,bug.md 里所有链接自然 resolve(相对路径不变)。
 
 ```markdown
 ### Bug R{{ROUND_NUM}}-{i}: <一句话标题>
@@ -98,17 +103,26 @@
 - Expected: ...
 - Actual: ...
 
-**Evidence**:
-- DOM snapshot 关键摘录:
-  ```
-  <playwright-cli snapshot 的相关片段>
-  ```
-- Screenshot: `round-{{ROUND_NUM}}-screenshots/r{{ROUND_NUM}}-bug-{i}-<short-slug>.png`
-  (路径相对于 `/round-out/`,等价于 host 端 `/home/azureuser/hapi-rounds/round-{{ROUND_NUM}}/round-{{ROUND_NUM}}-screenshots/...`)
-- Hub log 摘录(如果相关):从 `/round-out/.round-logs/dev.log`
-  ```
-  <相关 N 行>
-  ```
+**Evidence**(**4 类必须全有**,路径都相对 `round-{{ROUND_NUM}}.md` 所在目录):
+
+1. **Screenshot**(视觉)— [`round-{{ROUND_NUM}}-evidence/screenshots/r{{ROUND_NUM}}-bug-{i}-<short-slug>.png`](round-{{ROUND_NUM}}-evidence/screenshots/r{{ROUND_NUM}}-bug-{i}-<short-slug>.png)
+   - 你用 `playwright-cli -s=<user> eval 'await page.screenshot({path:"…"})'` 写
+
+2. **DOM snapshot YAML**(完整 DOM 树,playwright-cli 自动生成)— [`round-{{ROUND_NUM}}-evidence/playwright-cli/page-<timestamp>.yml`](round-{{ROUND_NUM}}-evidence/playwright-cli/page-<timestamp>.yml)
+   - 这个文件是 playwright-cli daemon 自动落的,你做完 `snapshot` 后选最相关的那个引用
+   - 同时配一段 inline yaml 摘录(关键 5-15 行)放进 bug report:
+     ```yaml
+     <playwright-cli snapshot 的关键节点片段>
+     ```
+
+3. **Browser console log**(浏览器报错 / warning) — [`round-{{ROUND_NUM}}-evidence/playwright-cli/console-<timestamp>.log`](round-{{ROUND_NUM}}-evidence/playwright-cli/console-<timestamp>.log)
+   - 同上,playwright-cli 自动写;断言 React/JS 错误时引用这个
+
+4. **Hub log 摘录**(后端) — [`round-{{ROUND_NUM}}-evidence/logs/dev.log`](round-{{ROUND_NUM}}-evidence/logs/dev.log) 第 `<起>-<止>` 行
+   - inline 摘录 5-20 行进 bug report:
+     ```
+     <相关行>
+     ```
 
 **Suspected root cause**(你的初步诊断,≤ 5 句):
 ...
@@ -122,10 +136,11 @@
 ```
 
 **质量底线**:
-- 每个 bug 都必须有 screenshot 落到 `/round-out/round-{{ROUND_NUM}}-screenshots/` 里
+- 4 类 evidence 缺一不可(零 bug 轮当然不写 bug report,只在 `## Bugs Found` 段说明零 bug)
 - Repro 必须能让另一个 agent 在容器外重跑出来
 - Suspected root cause 不是"agent 还没修好",是基于 spec + 代码的具体猜测
 - Pointers for fix 至少 1 个文件:行号 + 一句话猜测
+- **路径全部用 `round-{{ROUND_NUM}}-evidence/...` 起头**,不要写 `/round-out/...` 这种绝对路径(triage cp 后失效)
 
 如果某轮**零 bug**,在 `## Bugs Found` 段直接写 `(none — Nth zero-bug regression after R8/R12/R14)` 就行。
 
@@ -135,14 +150,20 @@
 
 ```bash
 playwright-cli -s=alice open --browser chromium http://localhost:5173
-playwright-cli -s=alice snapshot
+playwright-cli -s=alice snapshot                    # 自动写 .playwright-cli/page-<ts>.yml + console-<ts>.log
 playwright-cli -s=alice click 'button "Sign In"'
-# screenshot 落到 /round-out:
-mkdir -p /round-out/round-{{ROUND_NUM}}-screenshots
-playwright-cli -s=alice eval 'await page.screenshot({ path: "/round-out/round-{{ROUND_NUM}}-screenshots/r{{ROUND_NUM}}-step5-channel-header.png" })'
+
+# screenshot 用专门的子命令(注意:不是 `eval 'await page.screenshot(...)'` —— eval
+# 跑在 browser page context,没有 Node 的 page 对象):
+playwright-cli -s=alice screenshot --filename /round-out/round-{{ROUND_NUM}}-evidence/screenshots/r{{ROUND_NUM}}-step5-channel-header.png
+
+# full-page 截图:
+playwright-cli -s=alice screenshot --full-page --filename /round-out/round-{{ROUND_NUM}}-evidence/screenshots/r{{ROUND_NUM}}-bug-1-overview.png
 ```
 
 观察 = `snapshot` 拿 DOM yaml + `screenshot` 存 PNG。两个都要,bug report 里两份证据缺一不可。
+
+> entrypoint 已经把 cwd 设到 `/round-out/round-{{ROUND_NUM}}-evidence/`,playwright-cli 写出来的 `.playwright-cli/page-*.yml` / `console-*.log` 直接落在这。容器退出前 entrypoint 会把 `.playwright-cli` 改名 `playwright-cli` 去掉 dot 前缀方便 triage cp。所以你 bug report 里写 `round-{{ROUND_NUM}}-evidence/playwright-cli/page-<ts>.yml` 而不是 `.playwright-cli/...`。
 
 ---
 
