@@ -164,6 +164,36 @@ describe('ChannelAgent (Stage 2 router)', () => {
         expect(lastCall.text).toContain('help')
     })
 
+    it('strong signal trigger attribution is consumed once', async () => {
+        const engine = makeEngine()
+        agent = new ChannelAgent(engine as any)
+        engine.fire(userMsgEvent('@agent start the payment freeze thread', {
+            authorUserId: 'user-42',
+            messageId: 'm1'
+        }))
+        await new Promise((r) => setTimeout(r, 10))
+
+        expect(agent.consumeRecentTriggeringUser('channel-1')).toBe('user-42')
+        expect(agent.consumeRecentTriggeringUser('channel-1')).toBeNull()
+    })
+
+    it('weak signal batches do not create trigger attribution', async () => {
+        const engine = makeEngine()
+        agent = new ChannelAgent(engine as any)
+        engine.fire(userMsgEvent('routine status one', {
+            authorUserId: 'user-42',
+            messageId: 'm1'
+        }))
+        engine.fire(userMsgEvent('routine status two', {
+            authorUserId: 'user-43',
+            messageId: 'm2'
+        }))
+        await new Promise((r) => setTimeout(r, 10))
+
+        expect(engine.sendCalls[0].text).toContain('weak-signal-batch')
+        expect(agent.consumeRecentTriggeringUser('channel-1')).toBeNull()
+    })
+
     it('thread state change: session-updated with active=false fires strong signal', async () => {
         const engine = makeEngine()
         agent = new ChannelAgent(engine as any)

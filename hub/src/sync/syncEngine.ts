@@ -864,6 +864,17 @@ export class SyncEngine {
         const channel = this.store.channels.getChannel(channelId, namespace)
         if (!channel) return { type: 'error', message: `Channel ${channelId} not found` }
 
+        // Stage 2: credit the user who triggered the strong signal that led
+        // the bot to spawn this thread. The bot itself doesn't pass userId
+        // through MCP; ChannelAgent grants a one-shot attribution credit for
+        // @mentions and "+ New thread" requests. Weak-signal batches must not
+        // create bot-owned threads from routine chatter.
+        const triggeringUserId = this.channelTriggerLookup?.(channelId) ?? null
+        if (!triggeringUserId) {
+            return { type: 'error', message: 'Cannot spawn thread without a recent user strong signal' }
+        }
+        const createdByUserId = triggeringUserId
+
         // Find an online machine — prefer namespace match, fall back to any
         const namespaceMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
         let machine = namespaceMachines[0]
@@ -930,15 +941,6 @@ export class SyncEngine {
         if (result.type === 'error') return result
 
         const spawnedId = result.sessionId
-        // Stage 2: credit the user who triggered the strong signal that led
-        // the bot to spawn this thread. The bot itself doesn't pass userId
-        // through MCP; ChannelAgent shadow-tracks the most recent triggering
-        // user per-channel and exposes it here. Falling back to botSessionId
-        // would mis-attribute the thread to "bot" — breaking visibility
-        // creator-only checks (Alice fails to flip "Share to channel" because
-        // the row says she didn't create it) and rendering "by [bot uuid]".
-        const triggeringUserId = this.channelTriggerLookup?.(channelId) ?? null
-        const createdByUserId = triggeringUserId ?? botSessionId
         // Attach the new session to the channel
         this.attachSessionToChannel(spawnedId, channelId, namespace, opts.title, createdByUserId)
 

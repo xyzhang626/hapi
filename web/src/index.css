@@ -231,8 +231,39 @@ body {
     font-size: 0.875rem;
     line-height: 1.45;
 }
+.channel-message-markdown .aui-md-table-wrapper {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.channel-message-markdown .aui-md-table {
+    table-layout: auto;
+    min-width: min(640px, 100%);
+    max-width: none;
+}
+.channel-message-markdown .aui-md-th,
+.channel-message-markdown .aui-md-td {
+    overflow-wrap: break-word;
+    word-break: normal;
+}
 .channel-message-markdown .aui-md > :first-child { margin-top: 0; }
 .channel-message-markdown .aui-md > :last-child { margin-bottom: 0; }
+
+@media (max-width: 480px) {
+    .channel-message-markdown .aui-md-table-wrapper {
+        margin-inline: -0.25rem;
+        padding-inline: 0.25rem;
+    }
+    .channel-message-markdown .aui-md-table {
+        font-size: 0.75rem;
+        min-width: 640px;
+    }
+    .channel-message-markdown .aui-md-th,
+    .channel-message-markdown .aui-md-td {
+        padding: 0.35rem 0.25rem;
+    }
+}
 
 .aui-md-codeblock pre.shiki {
     margin: 0;

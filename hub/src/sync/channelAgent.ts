@@ -93,13 +93,26 @@ export class ChannelAgent {
     }
 
     /** Last user who fired a strong signal in this channel, if it was within
-     *  the freshness window (default 5 minutes). Used by botSpawnThread to
-     *  attribute new threads to the requester instead of the bot session. */
+     *  the freshness window (default 5 minutes). Used by tests and by the
+     *  one-shot consumer below. */
     public lookupRecentTriggeringUser(channelId: string, withinMs = 5 * 60 * 1000): string | null {
         const entry = this.lastTriggeringUserId.get(channelId)
         if (!entry) return null
         if (Date.now() - entry.at > withinMs) return null
         return entry.userId
+    }
+
+    /** Consume the recent triggering user once.
+     *
+     * Bot MCP calls do not carry the original user id. A strong signal
+     * (@mention / + New thread) grants one spawn attribution credit. Weak
+     * signal batches must not be able to create unowned threads by falling
+     * back to the bot session id or reusing stale attribution.
+     */
+    public consumeRecentTriggeringUser(channelId: string, withinMs = 5 * 60 * 1000): string | null {
+        const userId = this.lookupRecentTriggeringUser(channelId, withinMs)
+        this.lastTriggeringUserId.delete(channelId)
+        return userId
     }
 
     stop(): void {
