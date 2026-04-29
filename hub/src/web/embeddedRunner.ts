@@ -63,7 +63,13 @@ export class EmbeddedRunner {
         }
 
         const child = spawn({
-            cmd: ['bun', this.cliEntry, 'runner', 'start-sync'],
+            // Use the absolute path of the bun runtime that's running THIS hub
+            // process. Relying on PATH lookup ("bun") fails when hub's PATH
+            // doesn't include ~/.bun/bin (which can happen when hub is started
+            // via setsid, env, or a stripped-env nohup wrapper). process.execPath
+            // is always set to the running interpreter and works regardless of
+            // shell environment.
+            cmd: [process.execPath, this.cliEntry, 'runner', 'start-sync'],
             env,
             stdout: this.verbose ? 'pipe' : 'ignore',
             stderr: this.verbose ? 'pipe' : 'ignore',
