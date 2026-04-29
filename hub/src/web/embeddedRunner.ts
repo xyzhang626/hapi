@@ -53,8 +53,30 @@ export class EmbeddedRunner {
             throw new Error('[EmbeddedRunner] already started')
         }
 
+        // The runner subprocess (and the wrapper subprocesses it forks) need to
+        // be able to find the `claude` binary on PATH. When hub itself is
+        // launched via setsid/nohup/systemd with a stripped environment, PATH
+        // can be missing ~/.local/bin (npm-user installs) and ~/.bun/bin —
+        // which causes findGlobalClaudePath() inside the wrapper to throw
+        // 'Claude Code CLI not found on PATH'. claudeRemoteLauncher's catch
+        // silently restarts on every message, so the bot looks hung but is
+        // really retrying-forever. Prepend the standard user-local bin dirs
+        // so this can't happen even with a hostile parent env.
+        const homeDir = process.env.HOME ?? '/home'
+        const extraPathSegments = [
+            `${homeDir}/.local/bin`,
+            `${homeDir}/.bun/bin`
+        ]
+        const existingPath = process.env.PATH ?? ''
+        const existingSegments = new Set(existingPath.split(':').filter(Boolean))
+        const prepend = extraPathSegments.filter((seg) => !existingSegments.has(seg))
+        const mergedPath = prepend.length > 0
+            ? `${prepend.join(':')}:${existingPath}`
+            : existingPath
+
         const env: Record<string, string> = {
             ...process.env as Record<string, string>,
+            PATH: mergedPath,
             HAPI_API_URL: this.apiUrl,
             CLI_API_TOKEN: this.cliApiToken
         }
