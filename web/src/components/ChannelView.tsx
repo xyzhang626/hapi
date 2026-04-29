@@ -120,6 +120,17 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
         staleTime: 0
     })
     const onlineCount = presenceQuery.data?.online?.length ?? 0
+    // R21: at scale (50+ members), workspace-presence "online" alone is
+    // misleading — same-namespace presence won't reflect channel size at
+    // all. Surface the channel member count alongside online so the user
+    // sees "👥 50 members · 1 online" in big rooms. Cached separately so
+    // it stays cheap; refetched on channel-membership SSE events upstream.
+    const membersQuery = useQuery({
+        queryKey: queryKeys.channelMembers(channel.id),
+        queryFn: () => api.getChannelMembers(channel.id),
+        staleTime: 30_000
+    })
+    const memberCount = membersQuery.data?.members?.length ?? 0
 
     return (
         <div className="flex flex-col h-full">
@@ -139,9 +150,13 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                     <span
                         className="text-xs"
                         style={{ color: 'var(--app-hint)' }}
-                        title={`${onlineCount} workspace member${onlineCount === 1 ? '' : 's'} online`}
+                        title={
+                            memberCount > 0
+                                ? `${memberCount} channel member${memberCount === 1 ? '' : 's'}, ${onlineCount} online (workspace-scoped presence)`
+                                : `${onlineCount} workspace member${onlineCount === 1 ? '' : 's'} online`
+                        }
                     >
-                        👥 {onlineCount} online
+                        👥 {memberCount > 0 ? `${memberCount} member${memberCount === 1 ? '' : 's'} · ${onlineCount} online` : `${onlineCount} online`}
                     </span>
                     <div className="ml-auto flex items-center gap-3">
                         {channelAny.botSessionId && (
