@@ -6,7 +6,7 @@ import type { ChannelMessage, Channel, Session } from '@/types/api'
 import { ThreadCard } from './ThreadCard'
 import { AgentConfigEditor } from './AgentConfigEditor'
 import { StandaloneMarkdown } from './StandaloneMarkdown'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useAppContext } from '@/lib/app-context'
 import { queryKeys } from '@/lib/query-keys'
@@ -102,6 +102,21 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
     }
 
     const sortedMessages = ([...messages] as ChannelViewMessage[]).sort((a, b) => a.seq - b.seq)
+
+    // R18-3: when both a `thread_card` and an `agent_summary` exist for the
+    // same threadId (the cancel_thread MCP path emits both), drop the
+    // duplicate `agent_summary` row and merge its `reason` into the
+    // thread_card's enrichment instead. Without dedup the user sees two
+    // stacked cards for the same cancelled thread.
+    const threadCardIds = new Set<string>()
+    const agentSummaryByThreadId = new Map<string, ChannelViewMessage>()
+    for (const m of sortedMessages) {
+        const body = typeof m.body === 'string' ? tryParse(m.body) : (m.body as Record<string, unknown> | null)
+        const threadId = body && typeof body.threadId === 'string' ? (body.threadId as string) : null
+        if (!threadId) continue
+        if (m.kind === 'thread_card') threadCardIds.add(threadId)
+        else if (m.kind === 'agent_summary') agentSummaryByThreadId.set(threadId, m)
+    }
     // Stage 2: bot session lives in the channel as a "worker", not a thread.
     // Filter it out of every thread-flavored list (sidebar, threads section,
     // pinned chips). The bot session is reachable via the "Bot session →"
@@ -244,6 +259,8 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                         key={msg.id}
                         message={msg}
                         sessions={threadSessions}
+                        threadCardIds={threadCardIds}
+                        agentSummaryByThreadId={agentSummaryByThreadId}
                         onOpenThread={onOpenThread}
                         onReact={(emoji) => handleReact(msg.id, emoji)}
                     />
@@ -330,9 +347,9 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
                         <DialogTitle>New thread</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-3 mt-2">
-                        <div className="text-sm" style={{ color: 'var(--app-hint)' }}>
+                        <DialogDescription className="text-sm" style={{ color: 'var(--app-hint)' }}>
                             Briefly describe the topic — the channel agent will spawn a thread session and start working on it.
-                        </div>
+                        </DialogDescription>
                         <textarea
                             value={newThreadDraft}
                             onChange={(e) => setNewThreadDraft(e.target.value)}
@@ -382,11 +399,15 @@ export function ChannelView({ api, channel, messages, sessions, onOpenThread, on
 function ChannelMessageItem({
     message,
     sessions,
+    threadCardIds,
+    agentSummaryByThreadId,
     onOpenThread,
     onReact,
 }: {
     message: ChannelViewMessage
     sessions: Session[]
+    threadCardIds: Set<string>
+    agentSummaryByThreadId: Map<string, ChannelViewMessage>
     onOpenThread: (sessionId: string) => void
     onReact: (emoji: string) => void
 }) {
@@ -397,6 +418,15 @@ function ChannelMessageItem({
         // Resolve it to the thread's createdByUserId via the sessions snapshot
         // so the card shows "by Alice" instead of "by 6982b16c-...".
         const threadId = typeof cardData.threadId === 'string' ? (cardData.threadId as string) : null
+
+        // R18-3: suppress agent_summary when there's a thread_card for the
+        // same threadId — the thread_card row is the canonical card; we'll
+        // merge agent_summary's `reason` and `status` into its enrichment
+        // below so the single surviving card carries both bits of info.
+        if (message.kind === 'agent_summary' && threadId && threadCardIds.has(threadId)) {
+            return null
+        }
+
         const threadSession = threadId ? sessions.find((s) => s.id === threadId) : null
         const friendlyStartedBy = threadSession
             ? ((threadSession as Session & { createdByDisplayName?: string }).createdByDisplayName
@@ -409,11 +439,54 @@ function ChannelMessageItem({
         // so the card reflects current action, not just the original title.
         const liveTitle = (threadSession as Session | undefined)?.threadTitle
         const liveVisibility = (threadSession as Session | undefined)?.visibility
+
+        // R18-2: live-mirror the badge status on `thread_card`. The card's
+        // `body.status` is frozen at spawn time as `'active'`; without this
+        // override the badge stays "Active" forever even after natural
+        // completion or cancellation. Hub vocabulary → ThreadCard vocabulary:
+        //   threadStatus='archived' + active=false → 'cancelled'
+        //   threadStatus='completed'              → 'completed'
+        //   else                                  → leave body.status (default 'active')
+        // Gate on kind === 'thread_card' so agent_summary's point-in-time
+        // `body.status='canceled'` survives untouched (when surfaced — though
+        // currently it's the dropped-by-dedup path; kept for safety).
+        let liveStatus: string | undefined
+        if (message.kind === 'thread_card' && threadSession) {
+            const ts = (threadSession as Session & { threadStatus?: string; active?: boolean })
+            if (ts.threadStatus === 'archived' && ts.active === false) {
+                liveStatus = 'cancelled'
+            } else if (ts.threadStatus === 'completed') {
+                liveStatus = 'completed'
+            }
+        }
+
+        // R18-3: pull `reason` (and the authoritative `status='canceled'`)
+        // from a sibling agent_summary so the surviving thread_card explains
+        // why it was cancelled — the agent_summary itself is suppressed above.
+        let mergedReason: string | undefined
+        if (message.kind === 'thread_card' && threadId) {
+            const summary = agentSummaryByThreadId.get(threadId)
+            if (summary) {
+                const summaryBody = (typeof summary.body === 'string' ? tryParse(summary.body) : summary.body) as Record<string, unknown> | null
+                if (summaryBody && typeof summaryBody.reason === 'string') {
+                    mergedReason = summaryBody.reason
+                }
+                if (!liveStatus && summaryBody && typeof summaryBody.status === 'string') {
+                    // Fallback for the rare case where the session row hasn't
+                    // landed live status yet; agent_summary is authoritative
+                    // for cancel events.
+                    liveStatus = summaryBody.status
+                }
+            }
+        }
+
         const enrichedCard: Record<string, unknown> = {
             ...cardData,
             ...(friendlyStartedBy ? { startedBy: friendlyStartedBy } : {}),
             ...(liveTitle ? { taskTitle: liveTitle } : {}),
-            ...(liveVisibility ? { visibility: liveVisibility } : {})
+            ...(liveVisibility ? { visibility: liveVisibility } : {}),
+            ...(liveStatus ? { status: liveStatus } : {}),
+            ...(mergedReason ? { reason: mergedReason } : {})
         }
         return (
             <div className="group relative">

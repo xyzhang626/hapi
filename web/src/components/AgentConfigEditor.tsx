@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import type { ApiClient } from '@/api/client'
 
@@ -224,6 +224,9 @@ export function AgentConfigEditor(props: AgentConfigEditorProps) {
                     <DialogTitle>
                         Channel agent settings
                     </DialogTitle>
+                    <DialogDescription>
+                        Configure this channel's bot identity, behavior, members, and cleanup. Owner-only edits; everyone else gets a read-only view.
+                    </DialogDescription>
                 </DialogHeader>
 
                 {!canEdit && (

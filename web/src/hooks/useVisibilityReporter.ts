@@ -87,7 +87,25 @@ export function useVisibilityReporter(options: {
                     return
                 }
                 hadError = true
-                console.error('Failed to update visibility:', error)
+                // R19-2 / R21-1: two of the three rejection paths here are
+                // benign page-lifecycle race conditions, not real errors:
+                //   1. `TypeError: Failed to fetch` — the document is
+                //      unloading and the in-flight request was aborted by
+                //      the browser. There's nothing to recover.
+                //   2. `HTTP 404 Subscription not found` — the SSE
+                //      subscription was already invalidated by a prior
+                //      reconnect; the next page mount will mint a fresh id.
+                // Both used to land at console.error every reload / nav,
+                // burying real issues. Demote to console.debug; the retry
+                // timer below still runs in case the next attempt succeeds.
+                const isNetworkAbort = error instanceof TypeError
+                const message = error instanceof Error ? error.message : String(error)
+                const isStaleSubscription = /HTTP 404\b/.test(message)
+                if (isNetworkAbort || isStaleSubscription) {
+                    console.debug('Visibility update skipped (benign):', message)
+                } else {
+                    console.error('Failed to update visibility:', error)
+                }
                 if (!retryTimerRef.current) {
                     retryTimerRef.current = setTimeout(() => {
                         retryTimerRef.current = null
