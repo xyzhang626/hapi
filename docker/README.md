@@ -59,15 +59,40 @@ bash docker/run.sh hapi-e2e
 
 ## 模式 2:Round mode — `run-round.sh`
 
-完全自动跑一整轮 E2E。**默认是 find-mode**(只找 bug,不修代码,artifact 落到独立目录)。
+完全自动跑一整轮 E2E。**默认 codex 跑 find-mode**(物理只读 source / 物理写 artifact)。
 
 ```bash
-bash docker/run-round.sh 18 "scenario hint"                 # find mode (默认)
-bash docker/run-round.sh 18 "..." --mode fix                # legacy fix mode
-bash docker/run-round.sh 18 "..." --network host            # LAN endpoint 兜底
-bash docker/run-round.sh 18 "..." --dry-run                 # 只渲染 prompt,不 docker run
-bash docker/run-round.sh 18 "..." --prompt-file my.md       # 自定义 prompt 替代 template
-bash docker/run-round.sh 18 "..." --mode fix --base main    # fix mode 指定 base 分支
+bash docker/run-round.sh 18 "scenario hint"                    # codex + find (默认)
+bash docker/run-round.sh 18 "..." --agent claude               # 用 Claude Code 替代 codex
+bash docker/run-round.sh 18 "..." --mode fix                   # legacy fix mode (worktree+branch)
+bash docker/run-round.sh 18 "..." --network host               # LAN endpoint 兜底
+bash docker/run-round.sh 18 "..." --dry-run                    # 只渲染 prompt,不 docker run
+bash docker/run-round.sh 18 "..." --prompt-file my.md          # 自定义 prompt 替代 template
+bash docker/run-round.sh 18 "..." --mode fix --base main       # fix mode 指定 base 分支
+```
+
+### Codex vs Claude(同 find-mode 拓扑)
+
+| | **Codex (默认)** | Claude |
+|---|---|---|
+| CLI | `codex exec` (codex-cli 0.125) | `claude --print` (Claude Code) |
+| YOLO flag | `--dangerously-bypass-approvals-and-sandbox` | `--dangerously-skip-permissions` |
+| 凭证 | `~/.codex/config.toml` (RO) + `COPROXY_API_KEY` env | `~/.claude/settings.json` (RO) |
+| Endpoint | self-hosted proxy `http://10.0.0.12:8536/v1` | 同(`/`) |
+| 输出格式 | JSONL 事件流(`item.started/completed`、`command_execution`、`file_change`、`agent_message`) | free-form transcript |
+| 拒绝 root | 不拒(有 sandbox 模型) | 拒(强制非 root user) |
+| Tool 调用风格 | 单一 shell 通道(`/bin/bash -lc ...`)+ apply_patch | Read/Write/Edit/Bash 多工具 |
+
+容器中两个 CLI 都装了。`HAPI_AGENT` env 在 entrypoint 里 dispatch:
+
+```bash
+case "${HAPI_AGENT:-codex}" in
+    claude) claude --print --dangerously-skip-permissions < prompt > agent.log ;;
+    codex)  codex exec --dangerously-bypass-approvals-and-sandbox \
+                       --skip-git-repo-check --json \
+                       -o agent-last-message.txt \
+                       "$(cat prompt)" > agent.log ;;
+esac
 ```
 
 ### Find mode vs Fix mode
@@ -101,7 +126,8 @@ bash docker/run-round.sh 18 "..." --mode fix --base main    # fix mode 指定 ba
    - `bun run dev` 后台,日志重定向到 `/round-out/round-N-evidence/logs/dev.log`
    - 等 dev.log 出现"HAPI Hub is ready" + "EmbeddedRunner ... started"双信号(max 120s)
    - `cd /round-out/round-N-evidence`(playwright-cli 的 `.playwright-cli/` 自动落到这,跟 logs/screenshots 同目录)
-   - `claude --print --dangerously-skip-permissions < /round-out/round-prompt.md > /round-out/round-N-evidence/logs/claude.log`
+   - `claude --print --dangerously-skip-permissions < /round-out/round-prompt.md > /round-out/round-N-evidence/logs/agent.log` (claude path)
+     **OR** `codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json -o ... "$(cat prompt)" > agent.log` (codex path,默认)
 5. claude 自主跑流程:读 spec、设计 round、写 `/round-out/round-N.md`、playwright 三个 named session 操作 → 发现 bug 写**结构化 bug report**(每个 bug 4 类 evidence:screenshot / DOM yaml / console log / hub log,路径全用 `round-N-evidence/...` 相对路径)
 6. claude 退出 → entrypoint 把 `.playwright-cli` 改名 `playwright-cli`(去掉 dot 让 triage `cp -r` 不漏)→ cleanup → `--rm` 自清
 
@@ -120,7 +146,7 @@ bash docker/run-round.sh 18 "..." --mode fix --base main    # fix mode 指定 ba
     │   └── console-2026-04-29T...log      (浏览器 console 流)
     └── logs/
         ├── dev.log               (hub + vite + embedded runner stdout)
-        └── claude.log            (claude --print 全 transcript)
+        └── agent.log             (codex --json JSONL 流 / claude --print 全 transcript)
 ```
 
 ### Fix mode — 干的事(legacy)
@@ -132,7 +158,7 @@ bash docker/run-round.sh 18 "..." --mode fix --base main    # fix mode 指定 ba
 ```bash
 sudo docker logs -f hapi-e2e-round-18                                              # entrypoint stdout
 tail -f /home/azureuser/hapi-rounds/round-18/round-18-evidence/logs/dev.log        # hub/web 日志
-tail -f /home/azureuser/hapi-rounds/round-18/round-18-evidence/logs/claude.log     # 完整 claude transcript
+tail -f /home/azureuser/hapi-rounds/round-18/round-18-evidence/logs/agent.log     # 完整 agent transcript
 ls -la /home/azureuser/hapi-rounds/round-18/round-18-evidence/                     # 看 evidence subtree 长成什么
 cat   /home/azureuser/hapi-rounds/round-18/round-18.md                              # bug report 入口
 ```

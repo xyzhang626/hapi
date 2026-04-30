@@ -29,10 +29,13 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.13" \
     && ln -s /opt/bun/bin/bun /usr/local/bin/bun \
     && bun --version
 
-# Claude Code CLI + Playwright CLI as global npm packages — both end up in
-# /usr/lib/node_modules, world-readable, world-executable.
-RUN npm install -g @anthropic-ai/claude-code @playwright/cli \
-    && claude --version
+# Claude Code CLI + Codex CLI + Playwright CLI as global npm packages —
+# all end up in /usr/lib/node_modules, world-readable, world-executable.
+# Codex is the default find-mode agent (lighter sandbox model fits docker
+# isolation perfectly); claude is opt-in via run-round.sh --agent claude.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex @playwright/cli \
+    && claude --version \
+    && codex --version
 
 # @playwright/cli wants the "chrome-for-testing" browser variant, which is
 # NOT what the base image's pre-installed Chromium provides. Install it now
@@ -49,17 +52,17 @@ ENV HAPI_HOME=/data/.hapi \
     HOME=/home/pwuser
 
 # pwuser-owned mountpoints. /workspace is bind-mounted from the host
-# (azureuser uid 1000 = pwuser uid 1000, no perm gymnastics). /data and
-# /home/pwuser/.claude are container-private named volumes — Docker
-# initializes named-volume ownership from the mountpoint dir's owner in
-# the image, so we must mkdir + chown them BEFORE the VOLUME directive
-# or pwuser won't be able to write at runtime.
+# (azureuser uid 1000 = pwuser uid 1000, no perm gymnastics). /data,
+# /home/pwuser/.claude, /home/pwuser/.codex are container-private named
+# volumes — Docker initializes named-volume ownership from the mountpoint
+# dir's owner in the image, so we must mkdir + chown them BEFORE the VOLUME
+# directive or pwuser won't be able to write at runtime.
 #
 # In find-mode the host bind-mounts /workspace as RO, so each workspace
 # package's node_modules also needs a writable named volume mounted on
 # top — same trick: pre-create the mountpoint as pwuser-owned so the
 # volume inherits the right ownership on first attach.
-RUN mkdir -p /workspace/node_modules /data /home/pwuser/.claude \
+RUN mkdir -p /workspace/node_modules /data /home/pwuser/.claude /home/pwuser/.codex \
         /workspace/cli/node_modules \
         /workspace/hub/node_modules \
         /workspace/web/node_modules \
@@ -70,7 +73,7 @@ RUN mkdir -p /workspace/node_modules /data /home/pwuser/.claude \
 
 WORKDIR /workspace
 
-VOLUME ["/workspace/node_modules", "/data", "/home/pwuser/.claude"]
+VOLUME ["/workspace/node_modules", "/data", "/home/pwuser/.claude", "/home/pwuser/.codex"]
 
 EXPOSE 3006 5173
 

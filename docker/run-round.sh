@@ -35,7 +35,7 @@
 set -euo pipefail
 
 if [ $# -lt 2 ]; then
-    echo "usage: $0 <round-number> <scenario-hint> [--mode find|fix] [--base <branch>] [--dry-run] [--network host] [--prompt-file <path>]" >&2
+    echo "usage: $0 <round-number> <scenario-hint> [--agent codex|claude] [--mode find|fix] [--base <branch>] [--dry-run] [--network host] [--prompt-file <path>]" >&2
     exit 2
 fi
 
@@ -48,9 +48,11 @@ NET_MODE="bridge"
 DRY_RUN=0
 PROMPT_OVERRIDE=""
 ROUND_MODE="find"
+AGENT="codex"   # codex is the default; --agent claude opts in to Claude Code
 while [ $# -gt 0 ]; do
     case "$1" in
         --mode)         ROUND_MODE="$2"; shift 2 ;;
+        --agent)        AGENT="$2"; shift 2 ;;
         --base)         BASE_BRANCH="$2"; shift 2 ;;
         --network)      NET_MODE="$2"; shift 2 ;;
         --prompt-file)  PROMPT_OVERRIDE="$2"; shift 2 ;;
@@ -61,6 +63,11 @@ done
 
 if [ "$ROUND_MODE" != "find" ] && [ "$ROUND_MODE" != "fix" ]; then
     echo "--mode must be 'find' (default) or 'fix' (legacy)" >&2
+    exit 2
+fi
+
+if [ "$AGENT" != "codex" ] && [ "$AGENT" != "claude" ]; then
+    echo "--agent must be 'codex' (default) or 'claude'" >&2
     exit 2
 fi
 
@@ -149,6 +156,7 @@ else
         -e "s|{{PRIOR_ROUND}}|${PRIOR}|g" \
         -e "s|{{PRIOR_PRIOR_ROUND}}|${PRIOR_PRIOR}|g" \
         -e "s|{{BRANCH}}|${BRANCH}|g" \
+        -e "s|{{AGENT_NAME}}|${AGENT}|g" \
         -e "s|{{SCENARIO_HINT}}|${SCENARIO_HINT//|/\\|}|g" \
         "$TEMPLATE" > "$PROMPT_FILE"
     echo "[run-round] prompt rendered to $PROMPT_FILE"
@@ -188,7 +196,9 @@ RUN_ARGS=(
     -v "${CONTAINER_NAME}-node-modules":/workspace/node_modules
     -v "${CONTAINER_NAME}-hapi-home":/data
     -v "${CONTAINER_NAME}-claude-home":/home/pwuser/.claude
+    -v "${CONTAINER_NAME}-codex-home":/home/pwuser/.codex
     -e "HAPI_ROUND_MODE=$ROUND_MODE"
+    -e "HAPI_AGENT=$AGENT"
 )
 
 if [ "$ROUND_MODE" = "find" ]; then
@@ -220,9 +230,28 @@ fi
 
 if [ -f "$HOME/.claude/settings.json" ]; then
     RUN_ARGS+=( -v "$HOME/.claude/settings.json:/home/pwuser/.claude/settings.json:ro" )
-else
-    echo "[run-round] WARNING: $HOME/.claude/settings.json not found" >&2
+elif [ "$AGENT" = "claude" ]; then
+    echo "[run-round] WARNING: --agent claude but $HOME/.claude/settings.json not found" >&2
 fi
+
+# Codex auth: bind ~/.codex/config.toml RO + propagate the API key env var
+# named in the config (default COPROXY_API_KEY for the user's self-hosted
+# proxy). Codex looks at config.toml's `model_providers.<X>.env_key` to
+# know which env var to read; we just pass the host's value through.
+if [ -f "$HOME/.codex/config.toml" ]; then
+    RUN_ARGS+=( -v "$HOME/.codex/config.toml:/home/pwuser/.codex/config.toml:ro" )
+elif [ "$AGENT" = "codex" ]; then
+    echo "[run-round] WARNING: --agent codex (default) but $HOME/.codex/config.toml not found" >&2
+fi
+# Forward likely API-key env vars if set on host. Only set them inside the
+# container if the host has them; otherwise leave unset so codex's own
+# error message points at config.
+for var in COPROXY_API_KEY OPENAI_API_KEY AZURE_OPENAI_API_KEY; do
+    val="${!var:-}"
+    if [ -n "$val" ]; then
+        RUN_ARGS+=( -e "${var}=${val}" )
+    fi
+done
 
 if [ "$NET_MODE" = "host" ]; then
     RUN_ARGS+=( --network=host )
@@ -237,7 +266,7 @@ sudo docker run "${RUN_ARGS[@]}" "$IMG"
 
 cat <<EOF
 
-[run-round] container '$CONTAINER_NAME' started (mode=$ROUND_MODE).
+[run-round] container '$CONTAINER_NAME' started (mode=$ROUND_MODE, agent=$AGENT).
 
 Tail entrypoint logs:
   sudo docker logs -f $CONTAINER_NAME
@@ -246,8 +275,8 @@ EOF
 if [ "$ROUND_MODE" = "find" ]; then
     cat <<EOF
 
-Tail claude transcript (once it begins):
-  tail -f $EVIDENCE_DIR_HOST/logs/claude.log
+Tail agent transcript (once it begins):
+  tail -f $EVIDENCE_DIR_HOST/logs/agent.log
 
 Tail hub/web dev log:
   tail -f $EVIDENCE_DIR_HOST/logs/dev.log
@@ -269,8 +298,8 @@ EOF
 else
     cat <<EOF
 
-Tail claude transcript (once it begins):
-  sudo docker exec $CONTAINER_NAME tail -f /workspace/.round-logs/claude.log
+Tail agent transcript (once it begins):
+  sudo docker exec $CONTAINER_NAME tail -f /workspace/.round-logs/agent.log
 
 Inspect git progress mid-flight:
   git -C $WORKTREE_DIR log --oneline

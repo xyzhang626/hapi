@@ -1,6 +1,6 @@
 # Round {{ROUND_NUM}} — Find-Only E2E Round (HAPI Stage-2)
 
-> **You are a QA agent in find-only mode.** Your job is to **discover bugs and write high-quality bug reports**, not to fix code. A separate triage step on the host will aggregate your findings with sibling rounds and a different agent will do the fixes.
+> **You are a QA agent in find-only mode** (running as **{{AGENT_NAME}}**). Your job is to **discover bugs and write high-quality bug reports**, not to fix code. A separate triage step on the host will aggregate your findings with sibling rounds and a different agent will do the fixes.
 >
 > Stage-2 历史 R1–R{{PRIOR_ROUND}} 是"测+修+commit fix" —— 这一轮不是。修代码会触发 `bun --watch` 热重载风暴(R17 撞过 inotify EMFILE)、污染 product-code 边界、让多 round 撞同一个 bug 各修各的。
 >
@@ -39,7 +39,7 @@
 | `/round-out/round-{{ROUND_NUM}}.md` | 你 | 测试 plan + bug reports(triage 会 cp 到 `docs/e2e_test/round-{{ROUND_NUM}}.md`) |
 | `/round-out/round-{{ROUND_NUM}}-evidence/screenshots/*.png` | 你(playwright `page.screenshot`)| 视觉证据 |
 | `/round-out/round-{{ROUND_NUM}}-evidence/logs/dev.log` | entrypoint(已写入)| hub + web + runner stdout |
-| `/round-out/round-{{ROUND_NUM}}-evidence/logs/claude.log` | entrypoint(已写入)| 你自己的完整 transcript |
+| `/round-out/round-{{ROUND_NUM}}-evidence/logs/agent.log` | entrypoint(已写入)| 你自己的完整 transcript |
 | `/round-out/round-{{ROUND_NUM}}-evidence/playwright-cli/*.yml` | playwright-cli 守护进程自动写 | 每次 snapshot 的完整 DOM yaml |
 | `/round-out/round-{{ROUND_NUM}}-evidence/playwright-cli/console-*.log` | playwright-cli 守护进程自动写 | 浏览器 console 流 |
 

@@ -11,6 +11,7 @@ fi
 
 mkdir -p "$HAPI_HOME"
 mkdir -p "$HOME/.claude"
+mkdir -p "$HOME/.codex"
 
 cd /workspace
 
@@ -83,36 +84,64 @@ for i in $(seq 1 120); do
     sleep 1
 done
 
-echo "[entrypoint] launching autonomous claude session"
-echo "[entrypoint] full transcript will be at $LOG_DIR/claude.log"
+echo "[entrypoint] launching autonomous agent session (HAPI_AGENT=${HAPI_AGENT:-codex})"
+echo "[entrypoint] full transcript will be at $LOG_DIR/agent.log"
 
-# In find-mode, cd into the evidence dir before launching claude. claude
-# inherits this cwd, and so does every Bash tool invocation. playwright-cli
-# auto-creates `$CWD/.playwright-cli/` for its session yaml + console log;
-# putting cwd at the evidence dir keeps those next to logs/ and screenshots/.
-# In fix-mode (no evidence dir), fall back to /workspace (the writable
-# worktree), and to /round-out if only HAPI_ROUND_OUTPUT_DIR is set.
+# In find-mode, cd into the evidence dir before launching the agent. The
+# agent inherits this cwd, and so does every shell tool invocation. Most
+# tools (playwright-cli, codex's own session-state writes) drop files in
+# $CWD or $CWD/.<tool>/; putting cwd at the evidence dir keeps everything
+# next to logs/ and screenshots/. Fix-mode (no evidence dir) falls back
+# to /workspace (the writable worktree) or /round-out.
 if [ -n "${HAPI_ROUND_EVIDENCE_DIR:-}" ]; then
     cd "$HAPI_ROUND_EVIDENCE_DIR"
 elif [ -n "${HAPI_ROUND_OUTPUT_DIR:-}" ]; then
     cd "$HAPI_ROUND_OUTPUT_DIR"
 fi
 
-# `claude --print` reads the prompt from stdin and runs autonomously, calling
-# tools and emitting output until it stops. With the host's settings.json
-# (skipDangerousModePermissionPrompt: true) bind-mounted RO, claude will not
-# stop on tool prompts. `--dangerously-skip-permissions` is also passed
-# explicitly as a belt-and-braces guard in case settings.json ever changes.
+# Dispatch on HAPI_AGENT. Default = codex (find-mode default — lighter
+# sandbox model, fits the docker-isolated find-only contract). Pass
+# `--agent claude` from run-round.sh to use Claude Code instead. Both
+# CLIs read the prompt and run autonomously until they decide to stop.
 set +e
-claude \
-    --print \
-    --dangerously-skip-permissions \
-    < "$HAPI_ROUND_PROMPT_FILE" \
-    > "$LOG_DIR/claude.log" 2>&1
-CLAUDE_RC=$?
+case "${HAPI_AGENT:-codex}" in
+    claude)
+        # claude --print: stdin → stdout transcript.
+        # --dangerously-skip-permissions skips per-tool permission UI;
+        # claude refuses this as root, so the image runs as pwuser.
+        claude \
+            --print \
+            --dangerously-skip-permissions \
+            < "$HAPI_ROUND_PROMPT_FILE" \
+            > "$LOG_DIR/agent.log" 2>&1
+        AGENT_RC=$?
+        ;;
+    codex)
+        # codex exec: PROMPT is a positional arg (not stdin), so we read
+        # the prompt file via $(cat). --dangerously-bypass-approvals-and-sandbox
+        # is codex's "trust me, I'm in a container" flag — explicitly
+        # documented for externally-sandboxed environments. --skip-git-repo-check
+        # because /workspace is RO and the inner .git is bind-mounted but
+        # codex shouldn't try to commit anyway. --json prints structured
+        # event stream which is much easier to parse than free-form
+        # transcripts (we still capture it as agent.log).
+        codex exec \
+            --dangerously-bypass-approvals-and-sandbox \
+            --skip-git-repo-check \
+            --json \
+            -o "$LOG_DIR/agent-last-message.txt" \
+            "$(cat "$HAPI_ROUND_PROMPT_FILE")" \
+            > "$LOG_DIR/agent.log" 2>&1
+        AGENT_RC=$?
+        ;;
+    *)
+        echo "[entrypoint] unknown HAPI_AGENT='${HAPI_AGENT}' (must be 'codex' or 'claude')" >&2
+        AGENT_RC=2
+        ;;
+esac
 set -e
 
-echo "[entrypoint] claude exited rc=$CLAUDE_RC"
+echo "[entrypoint] agent exited rc=$AGENT_RC"
 
 # playwright-cli's session metadata + console logs land in $CWD/.playwright-cli
 # (i.e. the evidence dir's hidden subdir). Rename to a non-hidden name so
@@ -140,4 +169,4 @@ else
     git log --oneline -10 || true
 fi
 
-exit "$CLAUDE_RC"
+exit "$AGENT_RC"
